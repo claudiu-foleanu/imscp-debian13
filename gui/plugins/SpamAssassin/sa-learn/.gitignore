@@ -1,0 +1,4 @@
+# Messages reported as spam/ham by users (private data): never commit them
+*
+!.gitignore
+!.gitkeep

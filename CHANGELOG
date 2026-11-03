@@ -81,6 +81,14 @@ PLUGINS
            bundled; ported to Debian 13 (opendkim 2.11 socket in Postfix
            chroot, postfix-policyd-spf-python, policyd-weight systemd unit
            fix), ADSP removed, dead DNSBLs removed, security fixes
+    Added: ClamAV 1.4.0 and SpamAssassin 2.1.0 plugins bundled; ported to
+           Debian 13 (ClamAV 1.4, SpamAssassin 4.0 / spamd unit, DBD::MariaDB,
+           schema migration for SpamAssassin 4, Roundcube 1.6 markasjunk and
+           sauserprefs 1.20.2, clamav-unofficial-sigs 8.0.0)
+    Fixed: SpamAssassin: messages reported as spam/ham by users were never
+           deleted after learning; Roundcube integration never configured
+           (renamed parameter); SQL preferences failed with DBD::MariaDB
+           (port with localhost), which disabled spam filtering
     Fixed: Postfix policy service restrictions were duplicated on re-enable
            and never removed on disable (PolicydSPF, PolicydWeight)
     Enhancement: Bundled plugins are no longer overwritten by older

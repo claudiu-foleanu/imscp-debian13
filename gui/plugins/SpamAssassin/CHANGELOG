@@ -1,0 +1,265 @@
+SpamAssassin - ChangeLog
+========================
+
+------------------------------------------------------------------------------------------------------------------------
+Version 2.1.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Added: Debian 13 (Trixie) support (SpamAssassin 4.0.x, spamass-milter 0.4.0, Postfix 3.10, MariaDB 11.8,
+           Roundcube 1.6.x)
+    Added: SPAMD(8p) `user' and `group' configuration parameters (backported from v2.0.2)
+    Added: spamass_milter `postfix_milter_default_action' configuration parameter (default: accept)
+    Added: SpamAssassin 4.0 DMARC plugin management (disabled by default as it requires the DKIM and SPF plugins)
+    Added: SQL migration for the SpamAssassin 4.0 schema (utf8mb4, AWL msgcount/last_hit columns, binary Bayes
+           token/msgid columns)
+    Changed: SPAMD(8p) is managed through the spamd service (spamd package, /etc/default/spamd) on Debian >= 12
+    Changed: SpamAssassin daily maintenance (sa-update/sa-compile) is provided by the spamassassin-maintenance.timer
+             systemd unit (Debian >= 11); the timer is enabled on plugin activation and disabled on deactivation
+    Changed: The Heinlein Support ruleset is updated through a dedicated hourly cron script that no longer depends
+             on the Debian /etc/cron.daily/spamassassin script layout
+    Changed: SpamAssassin SQL DSN make use of the DBD::MariaDB driver when available (SpamAssassin >= 4.0)
+    Changed: The SpamAssassin 4.0 DecodeShortURLs plugin is used in place of the 3rd-party plugin which has been
+             removed (both share the same package name)
+    Changed: SpamAssassin 4.0 option names in the generated 00_imscp.cf file (auto_welcomelist_*)
+    Changed: SPAMD(8p) unix socket path is now /run/spamassassin.sock
+    Changed: Milter entries are now added using the Postfix per-milter settings syntax
+             ({ unix:/spamass/spamass.sock, default_action=accept }); the global Postfix `milter_default_action'
+             parameter, shared with other milter plugins, is no longer modified
+    Changed: Only the SpamAssassin milter entries and the milter_connect_macros macros required by spamass-milter
+             are added/removed; values that belong to other plugins (OpenDKIM, ClamAV...) are left untouched
+    Changed: The markasjunk2 Roundcube plugin has been replaced by the markasjunk Roundcube core plugin
+             (`markasjunk' configuration parameter; `markasjunk2' is still accepted)
+    Changed: Bundled SAUserPrefs Roundcube plugin updated to version 1.20.2 (Roundcube 1.5/1.6, elastic skin, SAv4
+             mode, PHP >= 7.0)
+    Changed: Roundcube plugin configuration files are written in the Roundcube configuration directory
+             (config/<plugin>.inc.php); Roundcube core plugin directories are never modified
+    Changed: Roundcube integration supports the Roundcube webmail as installed by i-MSCP 1.5.x
+             (vendor/imscp/roundcube/roundcubemail)
+    Changed: The iXhash2 SpamAssassin plugin has been ported to the SpamAssassin 4.0 async DNS API; dead
+             ix.dnsbl.manitu.net and ixhash.spameatingmonkey.net zones are no longer queried
+    Changed: Commands are run as the SPAMD(8p) user through RUNUSER(1); the user login shell is no longer relevant
+    Fixed: Roundcube integration was never processed with i-MSCP 1.5.x (WEB_MAIL_CLIENT_PACKAGES parameter)
+    Fixed: Messages reported as spam/ham through Roundcube were never deleted once learned
+    Fixed: Bayes learning was broken (binary tokens stored in an utf8 case-insensitive column)
+    Fixed: AWL plugin was broken with SpamAssassin >= 3.4.2 (renamed columns)
+    Fixed: `pyzor discover' command no longer exists (Pyzor >= 1.0)
+    Fixed: Razor registration failure (network) no longer prevents plugin activation
+    Fixed: Global `use_razor2' preference was never enforced (`use_bayes' was updated instead)
+    Fixed: Errors of the global SA preferences updates were ignored
+    Fixed: PORT_SPAMASSASSIN service port was never registered in TCP mode (wrong configuration parameter name)
+    Fixed: Database transaction leak when the mail account being deleted was not found
+    Fixed: AWL data of deleted mail accounts were not removed
+    Fixed: Ownership of SPAMD(8p) homedir sub-directories was not set (wrong iMSCP::Dir::make() usage)
+    Fixed: Roundcube plugin configuration files were created with a wrong umask (decimal 227)
+    Security: No shell is involved anymore when running sa-learn, sa-update, razor-admin... (list-form commands);
+              usernames extracted from sa-learn spool filenames are validated
+    Security: Symlinks and non-regular files are ignored in the sa-learn spool directory (writable by the panel user)
+    Security: Values written in shell-sourced files (/etc/default/spamd, /etc/default/spamass-milter) are validated
+    Security: Values written in the SAUserPrefs PHP configuration file are escaped
+
+------------------------------------------------------------------------------------------------------------------------
+Version 2.0.1
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Compile time error: autoused module List::MoreUtils has unique import() method
+
+------------------------------------------------------------------------------------------------------------------------
+Version 2.0.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Added: Plugin configuration parameters for the `DKIM' SA plugin (disabled by default)
+    Added: Plugin configuration parameters for the `SPF' SA plugin (disabled by default)
+    Added: Plugin configuration parameters for the `Rule2XSBody' SA plugin (enabled by default)
+    Backported: Changes from https://github.com/smfreegard/DecodeShortURLs/pull/2 (DecodeShortURLs.cf file only)
+    Changed: DKIM and SPF SA plugins are now disabled by default
+    Changed: MILTER default action from `accept' to `tempfail'
+    Changed: Usage of UDS instead of TCP for SPAMD(8p) -- Performance boost
+    Enhancement: Automatically install distribution packages
+    Fixed: Bad ownership set on DecodeShortURLs and iXash2 SpamAssassin plugin files
+    Fixed: Cronjobs are not registered when the plugin get re-activated
+    Fixed: Delay restart of SA services on i-MSCP upgrade/reconfiguration
+    Fixed: Discard any user preference that belongs to a disabled plugins in user scores and preferences SQL query
+    Fixed: Give SpamAssassin a higher priority by adding it at begin of the smtpd_milters list
+    Fixed: Guess the SPAMD(8p) unix user/group instead of hard-coding them
+    Fixed: Make sure that configuration files are created with expected UMASK(2)
+    Fixed: Make use of iMSCP::Crypt library to generate SA SQL user password
+    Fixed: On plugin reconfiguration, current user preference must be preserved whenever possible (see UPDATE.md file)
+    Fixed: SA bayesian data and user preferences which belong to an i-MSCP email account being deleted are not removed
+    Fixed: SA database must be dropped on plugin uninstallation
+    Fixed: Stop and disable SA services on plugin deactivation
+    Fixed: Synchronize the database and the journal once per training session (sa-learn)
+    Removed: i-MSCP 00_imscp.pre SA configuration file; SA Plugins are now loaded from distribution package files
+    Removed: `use_auto_whitelist' preference from the `userpref' database table as this preference is not settable
+    Removed: Blacklist score preference (-6) from the `userpref' database table; Default (-100.00) fits better
+    Removed: Whitelist score preference (10) from the `userpref' database table; Default (100.000) fits better
+    Review: Early exits if the storage server is not running (cronjobs)
+    Review: Make use of an all-in-one SQL query instead of 6 queries to delete user bayesian data stored in database
+    Rewritten: Plugin configuration file
+    Updated: Roundcube MarkAsJunk2 plugin from version 1.9 to version 1.10
+    Updated: Roundcube SAUserPrefs plugin from version 1.15 to version 1.16
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.2.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Added: Build version number
+    Fixed: Cannot pass additional flags to SPAMC(1) through SPAMASS_MILTER(8) due to internal configuration handling
+    Fixed: Cronjob for razor discovery fail due to missing shell for the `debian-spamd' user
+    Fixed: On plugin update, the Plugin::SpamAssassin::change() method shouldn't be called twice
+    Removed: Support for i-MSCP 1.3.x Serie
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.1.1
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Wrong cron settings for cronjob_bayes_sa_learn
+    Fixed: Requirements check for pyzor & razor if not enabled in config
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.1.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Added: 3rd party SpamAssassin rules from Heinlein Support
+    Added: Enable SpamAssassin service on systems with systemd
+    Added: Option to define networks which won't be scanned for SPAM
+    Added: Option to scan outgoing mails of SMTP authenticated senders
+    Changed: New default values in config.php
+    Changed: Option to reject all SPAM mails or only above a defined score level
+    Changed: Requirements check
+    Changed: Run cronjobs with lower priority
+    Changed: Switch Postfix service restart to reload
+    Changed: Usage of i-MSCP API to create/drop SQL user
+    Fixed: '_' and '%' wildcards must be escaped in GRANT statements
+    Fixed: Configuration files containing sensitive informations such as SQL user password must not be world-readable
+    Fixed: Syntax error in cronjob files
+    Removed: Deprecated config option sauserprefs_bayes_delete
+    Removed: Experimental smartmatch operator
+    Removed: Update SpamAssassin rules and keys. Will be done by the default SpamAssassin cronjob.
+    Updated: Roundcube plugin markasjunk2
+    Updated: Roundcube plugin sauserprefs
+    Updated: SpamAssassin plugin DecodeShortURLs
+    Updated for i-MSCP 1.3.x Serie
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.0.6
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Syntax error in bayes cronjob
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.0.5
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: The plugin's data are not available when plugin is loaded through a cron job
+    Fixed: Double entry on milter_connect_macros
+    Updated: DecodeShortURLs.pm
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.0.4
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Do not try to restart imscp_panel service if we are in setup mode
+    Fixed: Errors from the sa-update task are not handled correctly in plugin backend
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.0.3
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: imscp_panel service must be restarted to force flush of any opcode cache
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.0.2
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Possible uninitialized values
+    Review: CS fixes
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.0.1
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Possible uninitialized value
+    Fixed: ​$spamassassinDbName variable is not interpolated (backend)
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.0.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Compatibility issues with ClamAV plugin
+    Removed: Support for i-MSCP 1.1.x serie
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.12
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Catch whether Roundcube is installed
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.11
+------------------------------------------------------------------------------------------------------------------------
+
+    Added: Support for Roundcube 1.0.x
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.10
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: my variable $rs masks earlier declaration
+    Fixed: Roundcube plugins wont be activated after installation
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.9
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Unable to add more than one whitelist/blacklist entry with roundcube sauserprefs
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.8
+------------------------------------------------------------------------------------------------------------------------
+
+    Added: Plugin now compatible with SpamAssassin 3.4.0
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.7
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Backend file path in cronjob
+    Fixed: Unable to connect to MySQL
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.6
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Missing array on listener
+    Fixed: Use DATABASE_USER_HOST for the SpamAssassin database
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.5
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Cronjob file path
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.4
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Bug in combination with OpenDKIM plugin while creating the main.cf entry.
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.3
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: The permissions were not set if the spamassassin library folder was already present.
+    Added: Option to change the cronjob for sa-learn and also changed the cron interval.
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.2
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Database table bayes_vars was not created
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.1
+------------------------------------------------------------------------------------------------------------------------
+
+    First release

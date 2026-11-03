@@ -1,0 +1,114 @@
+ClamAV - ChangeLog
+==================
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.4.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Added: Debian 13 (Trixie) support (ClamAV 1.4.x, Postfix 3.10)
+    Added: `PostfixMilterDefaultAction' configuration parameter (default: tempfail)
+    Changed: Milter entries are now added using the Postfix per-milter settings syntax
+             ({ unix:/clamav/clamav-milter.ctl, default_action=tempfail }); the global Postfix
+             `milter_default_action' parameter, shared with other milter plugins, is no longer modified
+    Changed: Only the ClamAV milter entries (legacy and new forms) are removed from Postfix; entries that belong to
+             other plugins (OpenDKIM, SpamAssassin...) are left untouched
+    Changed: Default clamav-milter PidFile and ClamdSocket paths now point to /run
+    Changed: Postfix is reloaded immediately on plugin deactivation (before the ClamAV services are stopped)
+    Changed: The unofficial signatures are updated once ClamAV services are (re)started
+    Changed: The clamav-unofficial-sigs cron task and third-party databases are removed on plugin deactivation
+    Fixed: freshclam exit code 1 (databases already up-to-date) was treated as a failure
+    Fixed: Plugin installation/update no longer fails when freshclam cannot update the databases (e.g. CDN rate-limit)
+           while the databases are already available
+    Fixed: The milter socket directory is created in the Postfix chroot (/var/spool/postfix/clamav)
+    Fixed: clamav-milter option regexp could match options sharing a common prefix (e.g. LogFile vs LogFileUnlock)
+    Fixed: Commands are executed in list form (no shell involved)
+    Security: Values written into the clamav-unofficial-sigs user.conf file (sourced by bash) are now validated
+    Security: Paths listed in the clamav-unofficial-sigs purge.txt file (writable by the clamav user) are only
+              removed when they belong to the ClamAV databases or clamav-unofficial-sigs directories
+    Updated: 3rd party ClamAV Unofficial Signatures script (clamav-unofficial-sigs v8.0.0); the script is now
+             installed into /usr/local/sbin, self-upgrade and upgrade checks are disabled
+    Updated: Default unofficial signature sets: InterServer and URLhaus enabled, Yara-Rules Project disabled
+             (deprecated upstream, crashes ClamAV >= 1.0), MalwarePatrol product code 32
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.3.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Enhancement: Automatically initialize ClamAV databases
+    Enhancement: Automatically install distribution packages
+    Fixed: Delay restart of ClamAV services on i-MSCP upgrade/reconfiguration
+    Fixed: Don't raise error on plugin uninstallation if clamav-milter configuration file is missing (package removed)
+    Fixed: Stop and disable ClamAV services on plugin deactivation
+    Fixed: Quote any metacharacter in clamav-milter option regexp
+    Removed: `AllowSupplementaryGroups` configuration parameter (no supported by clamav-milter version ≥ 0.99.2)
+    Removed: Support for i-MSCP 1.3.x Serie
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.2.1
+------------------------------------------------------------------------------------------------------------------------
+
+    Changed: Disabled antidebug_antivm.yar signature which is causing errors in ClamAV
+    Updated: 3rd party ClamAV Unofficial Signatures script (clamav-unofficial-sigs v5.6.2)
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.2.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Added: 3rd party ClamAV Unofficial Signatures script (clamav-unofficial-sigs v5.3.2)
+    Fixed: `AllowSupplementaryGroups' option is not longer supported by ClamAV >= 0.99.2
+    Fixed: Postfix reload is sufficient
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.1.5
+------------------------------------------------------------------------------------------------------------------------
+
+    Changed: Default socket to UNIX
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.1.4
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: MaxFileSize option is not working (Typo)
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.1.3
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Possible uninitialized values
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.1.2
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Removed debug statements which prevent plugin to work
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.1.1
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: clamav-milter fail to restart (Ubuntu Trusty)
+    Fixed: Possible uninitialized value
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.1.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Fixed: Do not refer to smtpd_milters using the $smtpd_milters to avoid conflict with other plugins
+    Fixed: #IP-1278: Old setting not removed on upgrade
+    Fixed: #IP-1282: Add config Parameter "VirusAction"
+    Removed: Support for i-MSCP 1.1.x serie
+
+------------------------------------------------------------------------------------------------------------------------
+Version 1.0.0
+------------------------------------------------------------------------------------------------------------------------
+
+    Changed: Usage of postconf to edit Postfix main.cf configuration parameters
+    Fixed: CS issues
+    Fixed: Unable to restart clamav-milter ( Caused by the i-MSCP daemon  - fixed in i-MSCP Core )
+    Updated: License headers for new year
+
+------------------------------------------------------------------------------------------------------------------------
+Version 0.0.1
+------------------------------------------------------------------------------------------------------------------------
+
+    First release
