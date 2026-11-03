@@ -641,6 +641,7 @@
         <package>bash-completion</package>
         <package>bzip2</package>
         <package>ca-certificates</package>
+        <package>certbot</package>
         <package>coreutils</package>
         <package>cron</package>
         <package>curl</package>

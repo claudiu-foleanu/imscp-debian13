@@ -150,7 +150,11 @@ sub validateCertificate
         return FALSE;
     }
 
-    $self->{'ca_bundle_container_path'} = undef $caBundle;
+    # Reset the CA bundle path only when the self-signed certificate has been
+    # used as CA bundle for the validation. (The previous statement,
+    # 'undef $caBundle', always reset the path, so the CA bundle was never
+    # imported in the certificate chain.)
+    $self->{'ca_bundle_container_path'} = undef unless $caBundle;
     TRUE;
 }
 

@@ -57,6 +57,11 @@ DEBIAN 13 (TRIXIE) SUPPORT
            default settings warnings)
     Fixed: Courier: Dovecot sieve files listed as mailboxes after migration
            from Dovecot
+    Fixed: SSL CA bundle (intermediate certificates) never imported in the
+           certificate chains ('undef $caBundle' always reset the path)
+           (iMSCP::OpenSSL) - certificates were served without chain
+    Fixed: Ticket system pages failed to load (Tickets.php moved to include/)
+    Fixed: Unparsed software installer/APS placeholders in overview pages
 
 WEB ADD-ONS (the i-MSCP GitHub repositories of the add-on packages are gone)
     Rewritten: Roundcube and phpMyAdmin integration packages are now bundled
@@ -66,6 +71,12 @@ WEB ADD-ONS (the i-MSCP GitHub repositories of the add-on packages are gone)
              at setup time and verified against pinned SHA-256 checksums
     Enhancement: Roundcube managesieve (Dovecot) and password plugins enabled
     Removed: RainLoop (abandoned upstream) and MonstaFTP (sources lost)
+
+PLUGINS
+    Added: SGW_LetsEncrypt 1.6.0 plugin (GPL-2.0+, Cambell Prince) bundled;
+           ported to the Debian certbot package (webroot authenticator,
+           shared ACME challenge directory, certbot.timer renewals with deploy
+           hook), security fixes (shell/SQL injection, CSRF, XSS, ownership)
     Added: elFinder 2.1.70 Web file manager over local FTP (replaces MonstaFTP)
 
 BACKEND
