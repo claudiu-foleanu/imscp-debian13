@@ -11,6 +11,9 @@ Version 2.2.0
     Added: `postfix_milter_default_action' parameter -- Postfix per-milter default action (default: tempfail)
     Added: Customers can copy DKIM keys as a single unquoted string -- from 2.1.0 (1.6.x)
     Added: CSRF protection for the reseller interface (POST-only state-changing actions)
+    Added: `opendkim_remove_ar_from' and `opendkim_required_headers' parameters
+    Security: Forged Authentication-Results header fields claiming to come from this server (server hostname, Postfix
+              myhostname) are removed from incoming mails (RemoveARAll/RemoveARFrom) before OpenDMARC trusts them
     Changed: OpenDKIM is now configured exclusively through /etc/opendkim.conf (Socket, PidFile, UserID...); the
              deprecated /etc/default/opendkim file, opendkim.service.generate script and systemd override.conf file
              are no longer used. Legacy files created by previous versions are removed

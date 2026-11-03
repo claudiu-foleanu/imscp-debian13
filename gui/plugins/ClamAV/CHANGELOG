@@ -7,6 +7,12 @@ Version 1.4.0
 
     Added: Debian 13 (Trixie) support (ClamAV 1.4.x, Postfix 3.10)
     Added: `PostfixMilterDefaultAction' configuration parameter (default: tempfail)
+    Added: `clamd_options' configuration parameter (LocalSocketGroup, LocalSocketMode)
+    Added: systemd drop-in files: Restart=on-failure for the clamav-daemon and clamav-milter services
+    Security: The clamd socket is no longer world-accessible (Debian default: 666), which allowed any local user
+              (e.g. customer CGI scripts) to shut down clamd and stall all mails. LocalSocketMode 660 and
+              LocalSocketGroup clamav are set in clamd.conf (debconf answers kept in sync) and through a
+              clamav-daemon.socket drop-in file (with socket activation, clamd ignores the clamd.conf settings)
     Changed: Milter entries are now added using the Postfix per-milter settings syntax
              ({ unix:/clamav/clamav-milter.ctl, default_action=tempfail }); the global Postfix
              `milter_default_action' parameter, shared with other milter plugins, is no longer modified

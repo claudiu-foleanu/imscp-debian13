@@ -53,7 +53,7 @@ my $CONF_COMMENT_MARKER = '#Plugin::OpenDKIM# ';
 my @MANAGED_CONF_KEYS = qw/
     Canonicalization ExternalIgnoreList InternalHosts KeyTable LogWhy
     MinimumKeyBits Mode On-BadSignature On-KeyNotFound OversignHeaders PidFile
-    RequireSafeKeys SignatureAlgorithm SigningTable SoftwareHeader Socket
+    RemoveARAll RemoveARFrom RequiredHeaders RequireSafeKeys SignatureAlgorithm SigningTable SoftwareHeader Socket
     Syslog SyslogSuccess UMask UserID
 /;
 
@@ -62,6 +62,9 @@ our @GENKEY_PATHS = qw( /usr/sbin/opendkim-genkey /usr/bin/opendkim-genkey );
 
 # Valid (ASCII/punycode) domain name
 my $DOMAIN_NAME_RE = qr/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+
+# Valid hostname (authserv-id). No comma (list separator), no whitespace.
+my $HOSTNAME_RE = qr/^(?=.{1,253}\z)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\z/i;
 
 =head1 DESCRIPTION
 
@@ -434,6 +437,18 @@ sub _init
         defined && /^[^\s]+$/ or die( "Invalid entry in the `opendkim_trusted_hosts' parameter." );
     }
 
+    # Optional parameters (added in later plugin versions)
+    $c->{'opendkim_remove_ar_from'} //= [];
+    ref $c->{'opendkim_remove_ar_from'} eq 'ARRAY' or die( "Invalid `opendkim_remove_ar_from' parameter. Array expected." );
+    for ( @{$c->{'opendkim_remove_ar_from'}} ) {
+        defined && $_ =~ $HOSTNAME_RE or die( "Invalid entry in the `opendkim_remove_ar_from' parameter. Hostname expected." );
+    }
+    $c->{'opendkim_required_headers'} //= 'no';
+    $c->{'opendkim_required_headers'} = "$c->{'opendkim_required_headers'}" =~ /^(?:1|yes|true)\z/i ? 'yes' : (
+        "$c->{'opendkim_required_headers'}" =~ /^(?:0|no|false|)\z/i ? 'no'
+            : die( "Invalid `opendkim_required_headers' parameter. Boolean expected." )
+    );
+
     $self->{'dbh'} = iMSCP::Database->factory()->getRawDb();
     $self;
 }
@@ -587,6 +602,9 @@ sub _opendkimSetup
         $fContent =~ s/^([\t ]*(?:$keysRe)[\t ]+)/$CONF_COMMENT_MARKER$1/gim;
 
         my $confdir = $c->{'opendkim_confdir'};
+        my $removeARFrom = join ',', $self->_buildRemoveARFrom();
+        # Last line of defense against configuration injection
+        $removeARFrom =~ /^[^\s"'\\#]+\z/ or die( 'Invalid RemoveARFrom value for the OpenDKIM configuration file' );
         $fContent .= <<"EOF";
 # Begin Plugin::OpenDKIM
 # Settings below are managed by the i-MSCP OpenDKIM plugin.
@@ -603,6 +621,9 @@ On-BadSignature     $c->{'opendkim_on_bad_signature'}
 On-KeyNotFound      $c->{'opendkim_on_key_not_found'}
 OversignHeaders     From
 PidFile             /run/opendkim/opendkim.pid
+RemoveARAll         yes
+RemoveARFrom        $removeARFrom
+RequiredHeaders     $c->{'opendkim_required_headers'}
 RequireSafeKeys     yes
 SignatureAlgorithm  rsa-sha256
 SigningTable        file:$confdir/SigningTable
@@ -648,6 +669,45 @@ EOF
     }
 
     $serviceTasksSub->() == 0 or die( getMessageByType( 'error', { amount => 1, remove => 1 } ) || 'Unknown error' );
+}
+
+=item _buildRemoveARFrom( )
+
+ Build the list of authserv-ids for which Authentication-Results header fields
+ are removed from incoming (verified) messages (RemoveARFrom)
+
+ With RemoveARAll, opendkim(8) removes any Authentication-Results header field
+ which claims to come from one of those hosts, whatever the method (dkim, spf,
+ dmarc...), before the message is passed to the next milters. This prevents
+ forged results (e.g. "dkim=pass" from a remote sender) from being trusted by
+ OpenDMARC (TrustedAuthservIDs), SpamAssassin or MUAs. The list always
+ includes the i-MSCP server hostname (default OpenDMARC authserv-id) and the
+ Postfix myhostname value (the {j} macro, used by OpenDKIM for its own header
+ fields), plus the `opendkim_remove_ar_from' entries.
+
+ Return list, die on failure
+
+=cut
+
+sub _buildRemoveARFrom
+{
+    my ($self) = @_;
+
+    my @hosts = ( $::imscpConfig{'SERVER_HOSTNAME'} // '' );
+
+    my $confdir = Servers::mta->factory()->{'config'}->{'POSTFIX_CONF_DIR'} || '/etc/postfix';
+    my ($stdout, $stderr);
+    execute( [ 'postconf', '-c', $confdir, '-h', 'myhostname' ], \$stdout, \$stderr ) == 0 or die(
+        sprintf( "Couldn't get the Postfix myhostname parameter: %s", $stderr || 'Unknown error' )
+    );
+    push @hosts, $stdout // '';
+
+    push @hosts, @{$self->{'config'}->{'opendkim_remove_ar_from'}};
+
+    my %seen;
+    my @list = grep { $_ =~ $HOSTNAME_RE && !$seen{lc $_}++ } map { my $h = $_; $h =~ s/^\s+|\s+$//g; $h } @hosts;
+    @list or die( "Couldn't build the OpenDKIM RemoveARFrom list: no valid hostname" );
+    @list;
 }
 
 =item _removeLegacyConfig( )

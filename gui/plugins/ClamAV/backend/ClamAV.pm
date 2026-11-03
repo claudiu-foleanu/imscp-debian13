@@ -45,6 +45,15 @@ my $CUS_CONF_DIR = '/etc/clamav-unofficial-sigs';
 my $CUS_WORK_DIR = '/var/lib/clamav-unofficial-sigs';
 my $CUS_LOG_DIR = '/var/log/clamav-unofficial-sigs';
 our $CLAMAV_MILTER_CONF = '/etc/clamav/clamav-milter.conf';
+our $CLAMD_CONF = '/etc/clamav/clamd.conf';
+# Marker used to comment out distribution clamd.conf(5) settings that are
+# overridden by this plugin. Those lines are restored on deactivation.
+my $CLAMD_CONF_COMMENT_MARKER = '#Plugin::ClamAV# ';
+# clamd.conf(5) settings managed by this plugin (also clamav-daemon debconf keys)
+my @CLAMD_MANAGED_KEYS = qw/ LocalSocketGroup LocalSocketMode /;
+# systemd drop-in files installed by this plugin
+our $SYSTEMD_UNIT_DIR = '/etc/systemd/system';
+my $SYSTEMD_DROPIN_FILENAME = 'imscp-plugin-clamav.conf';
 # Unprivileged user/group as which the clamav-unofficial-sigs script is run
 # (must match the clam_user/clam_group values in os.conf)
 my $CUS_USER = 'clamav';
@@ -129,7 +138,8 @@ sub enable
 {
     my ( $self ) = @_;
 
-    my $rs = $self->_configureClamavMilter( 'configure' );
+    my $rs = $self->_configureClamd( 'configure' );
+    $rs ||= $self->_configureClamavMilter( 'configure' );
     $rs ||= $self->_configurePostfix( 'configure' );
     return $rs if $rs;
 
@@ -137,9 +147,23 @@ sub enable
         local $@;
         eval {
             my $serviceMngr = iMSCP::Service->getInstance();
-            for my $service ( qw/ clamav-freshclam clamav-daemon / ) {
-                $serviceMngr->enable( $service );
-                $serviceMngr->restart( $service );
+            $serviceMngr->enable( 'clamav-freshclam' );
+            $serviceMngr->restart( 'clamav-freshclam' );
+
+            $serviceMngr->enable( 'clamav-daemon' );
+            if ( _hasClamdSocketUnit() ) {
+                # The clamd socket is created by systemd (socket activation),
+                # and clamd(8) then ignores the LocalSocketMode/Group settings.
+                # The socket unit must be restarted for the SocketMode/Group
+                # settings to be applied, and it can't be while the service is
+                # running. The socket is stopped first, else a connection
+                # could activate the service again in the meantime.
+                _systemctlSocket( 'stop' );
+                $serviceMngr->stop( 'clamav-daemon' );
+                _systemctlSocket( 'start' );
+                $serviceMngr->start( 'clamav-daemon' );
+            } else {
+                $serviceMngr->restart( 'clamav-daemon' );
             }
 
             $serviceMngr->enable( 'clamav-milter' );
@@ -188,6 +212,7 @@ sub disable
         ? $self->_disableClamavUnofficialSigs() : $self->_configureClamavUnofficialSigs( 'deconfigure' );
     $rs ||= $self->_configurePostfix( 'deconfigure' );
     $rs ||= $self->_configureClamavMilter( 'deconfigure' );
+    $rs ||= $self->_configureClamd( 'deconfigure' );
     return $rs if $rs || $self->{'action'} ne 'disable';
 
     # The ClamAV milter is about to be stopped. Make Postfix aware of the
@@ -210,6 +235,9 @@ sub disable
             $serviceMngr->stop( $service );
             $serviceMngr->disable( $service );
         }
+
+        # Else, clamd would be socket-activated again on the next connection
+        _systemctlSocket( 'stop' ) if _hasClamdSocketUnit();
     };
     if ( $@ ) {
         error( $@ );
@@ -247,6 +275,32 @@ sub _init
     $self->{'config'}->{'PostfixMilterDefaultAction'} =~ /^(?:accept|reject|tempfail|quarantine)$/ or die(
         "Invalid value for the 'PostfixMilterDefaultAction' configuration parameter"
     );
+
+    # clamd socket settings (parameter added in a later plugin version)
+    my $clamdOptions = $self->{'config'}->{'clamd_options'} //= {};
+    ref $clamdOptions eq 'HASH' or die( "Invalid value for the 'clamd_options' configuration parameter" );
+    $clamdOptions->{'LocalSocketGroup'} //= 'clamav';
+    $clamdOptions->{'LocalSocketMode'} //= '660';
+    $clamdOptions->{'LocalSocketGroup'} =~ /^[a-z_][a-z0-9_-]{0,31}\z/ or die(
+        "Invalid value for the 'clamd_options' LocalSocketGroup configuration parameter"
+    );
+    $clamdOptions->{'LocalSocketMode'} =~ /^0?([0-7]{3})\z/ or die(
+        "Invalid value for the 'clamd_options' LocalSocketMode configuration parameter. Octal mode expected."
+    );
+    $clamdOptions->{'LocalSocketMode'} = $1;
+    oct( $clamdOptions->{'LocalSocketMode'} ) & 07 and die(
+        "Invalid value for the 'clamd_options' LocalSocketMode configuration parameter: the clamd socket must not "
+            . "be accessible to other users (e.g. 660)"
+    );
+    ( oct( $clamdOptions->{'LocalSocketMode'} ) & 0600 ) == 0600 or die(
+        "Invalid value for the 'clamd_options' LocalSocketMode configuration parameter: the clamd socket must be "
+            . "readable and writable by its owner (e.g. 660)"
+    );
+    for my $option ( keys %{ $clamdOptions } ) {
+        grep { $option eq $_ } @CLAMD_MANAGED_KEYS or die( sprintf(
+            "Unsupported '%s' clamd_options configuration parameter", $option
+        ));
+    }
 
     $self;
 }
@@ -678,6 +732,301 @@ sub _configureClamavMilter
     0;
 }
 
+=item _configureClamd( [ $action = 'deconfigure' ] )
+
+ Configure or deconfigure clamd (socket access)
+
+ The clamd socket gives full control over the ClamAV daemon (SHUTDOWN, RELOAD,
+ SCAN of any file readable by clamd...). Debian makes it world-accessible by
+ default (LocalSocketMode 666), meaning that any local user, including
+ customer CGI scripts, could shut down clamd and stall all mails (clamav-milter
+ OnFail Defer). This method:
+  - sets the LocalSocketGroup and LocalSocketMode settings in clamd.conf(5).
+    Overridden distribution settings are commented out (and restored on
+    deactivation);
+  - syncs the clamav-daemon debconf answers, so that the values are kept when
+    the clamav-daemon postinst script regenerates the clamd.conf file
+    (package upgrade, dpkg-reconfigure);
+  - installs systemd drop-in files: SocketGroup/SocketMode for the
+    clamav-daemon.socket unit (with socket activation, the socket is created
+    by systemd and clamd(8) ignores the clamd.conf settings), and
+    Restart=on-failure for the clamav-daemon and clamav-milter services.
+
+ Param string $action Action to be performed (configure|deconfigure)
+ Return int 0 on success, other on failure
+
+=cut
+
+sub _configureClamd
+{
+    my ( $self, $action ) = @_;
+    $action //= 'deconfigure';
+
+    local $@;
+    eval {
+        if ( lstat $CLAMD_CONF ) {
+            -f _ && !-l _ or die( sprintf( 'Refusing to process %s: not a regular file', $CLAMD_CONF ));
+            $self->_assertClamdSocketAccess() if $action eq 'configure';
+
+            my $file = iMSCP::File->new( filename => $CLAMD_CONF );
+            my $content = $file->get();
+            defined $content or die( sprintf( "Couldn't read the %s file", $CLAMD_CONF ));
+
+            my $newContent = $self->_renderClamdConf( $content, $action );
+            _writeFileAtomic( $CLAMD_CONF, $newContent, 0, 0, 0644 ) if $newContent ne $content;
+            $self->_syncClamdDebconf( $newContent );
+        } elsif ( $action eq 'configure' ) {
+            die( sprintf( 'File %s not found', $CLAMD_CONF ));
+        }
+
+        $self->_configureClamdSystemd( $action );
+    };
+    if ( $@ ) {
+        error( $@ );
+        return 1;
+    }
+
+    0;
+}
+
+=item _renderClamdConf( $content, $action )
+
+ Render the clamd.conf(5) file content for the given action
+
+ Param string $content Current clamd.conf file content
+ Param string $action Action to be performed (configure|deconfigure)
+ Return string New clamd.conf file content
+
+=cut
+
+sub _renderClamdConf
+{
+    my ( $self, $content, $action ) = @_;
+
+    # Remove our configuration block (if any) and restore distribution settings
+    $content = replaceBloc( "# Begin Plugin::ClamAV\n", "# Ending Plugin::ClamAV\n", '', $content );
+    $content =~ s/^\Q$CLAMD_CONF_COMMENT_MARKER\E//gm;
+    return $content unless $action eq 'configure';
+
+    # Comment out distribution settings that we override. Only the first
+    # occurrence is honored by the clamav-daemon debconf config script.
+    my $keysRe = join '|', map { quotemeta } @CLAMD_MANAGED_KEYS;
+    $content =~ s/^([\t ]*(?:$keysRe)(?:[\t ]|$))/$CLAMD_CONF_COMMENT_MARKER$1/gim;
+
+    $content .= "\n" if length $content && $content !~ /\n\z/;
+    $content .= "# Begin Plugin::ClamAV\n"
+        . "# Settings below are managed by the i-MSCP ClamAV plugin. Overridden distribution settings\n"
+        . "# are commented out with the '$CLAMD_CONF_COMMENT_MARKER' prefix and restored when the plugin is deactivated.\n";
+    my $options = $self->{'config'}->{'clamd_options'};
+    for my $option ( @CLAMD_MANAGED_KEYS ) {
+        # Last line of defense against configuration injection (see _init())
+        $options->{$option} =~ /^[A-Za-z0-9_-]+\z/ or die( sprintf( 'Invalid clamd %s option', $option ));
+        $content .= "$option $options->{$option}\n";
+    }
+    $content . "# Ending Plugin::ClamAV\n";
+}
+
+=item _assertClamdSocketAccess( )
+
+ Make sure that the clamav-milter user will be able to connect to clamd
+
+ Return void, die on failure
+
+=cut
+
+sub _assertClamdSocketAccess
+{
+    my ( $self ) = @_;
+
+    my $group = $self->{'config'}->{'clamd_options'}->{'LocalSocketGroup'};
+    my @gr = getgrnam( $group ) or die( sprintf( 'Unknown clamd LocalSocketGroup group: %s', $group ));
+    my $user = $self->{'config'}->{'clamav_milter_options'}->{'User'} || 'clamav';
+    my @pw = getpwnam( $user ) or die( sprintf( 'Unknown clamav-milter user: %s', $user ));
+
+    # The socket is owned by the clamav user (clamd User / SocketUser)
+    return if $pw[2] == 0 || $user eq 'clamav';
+
+    my $mode = oct( $self->{'config'}->{'clamd_options'}->{'LocalSocketMode'} );
+    return if ( $mode & 060 ) == 060 && ( $pw[3] == $gr[2] || grep { $_ eq $user } split /\s+/, $gr[3] );
+
+    die( sprintf(
+        "The clamav-milter user (%s) couldn't connect to clamd: it must be a member of the clamd LocalSocketGroup "
+            . "group (%s) and the LocalSocketMode mode must give read/write permissions to that group.",
+        $user, $group
+    ));
+}
+
+=item _syncClamdDebconf( $content )
+
+ Sync the clamav-daemon debconf answers with the given clamd.conf content
+
+ The clamav-daemon postinst script regenerates the clamd.conf file from the
+ debconf answers. Its config script first stores the active clamd.conf values
+ as debconf answers, but syncing them here ensures that the database is
+ coherent whatever happens (dpkg-reconfigure, reinstallation...).
+
+ Param string $content clamd.conf file content
+ Return void, die on failure
+
+=cut
+
+sub _syncClamdDebconf
+{
+    my ( undef, $content ) = @_;
+
+    my ( $cmd ) = grep { -x } qw( /usr/bin/debconf-set-selections /bin/debconf-set-selections );
+    return unless defined $cmd;
+
+    my $selections = '';
+    for my $key ( @CLAMD_MANAGED_KEYS ) {
+        # First active setting (same as the clamav-daemon config script)
+        my ( $value ) = $content =~ /^\Q$key\E[\t ]+(\S+)/m or next;
+        next unless $value =~ /^[A-Za-z0-9_-]+\z/;
+        $selections .= "clamav-daemon clamav-daemon/$key string $value\n";
+    }
+    return unless length $selections;
+
+    my $tmp = File::Temp->new( TEMPLATE => 'imscp-clamav-debconf.XXXXXXXX', TMPDIR => 1 );
+    print { $tmp } $selections or die( sprintf( "Couldn't write %s: %s", $tmp->filename(), $! ));
+    $tmp->flush() or die( sprintf( "Couldn't write %s: %s", $tmp->filename(), $! ));
+
+    my $rs = execute( [ $cmd, $tmp->filename() ], \my $stdout, \my $stderr );
+    debug( $stdout ) if length $stdout;
+    $rs == 0 or die( sprintf(
+        "Couldn't update the clamav-daemon debconf answers: %s", $stderr || $stdout || 'Unknown error'
+    ));
+}
+
+=item _hasClamdSocketUnit( )
+
+ Is the clamd socket managed by systemd (clamav-daemon.socket unit)?
+
+ Return bool
+
+=cut
+
+sub _systemctlSocket
+{
+    my ( $action ) = @_;
+    my $rs = execute( [ 'systemctl', '--quiet', $action, 'clamav-daemon.socket' ], \my $stdout, \my $stderr );
+    debug( $stdout ) if length $stdout;
+    error( $stderr || 'Unknown error' ) if $rs;
+    $rs;
+}
+
+sub _hasClamdSocketUnit
+{
+    my $serviceMngr = iMSCP::Service->getInstance();
+    return 0 unless $serviceMngr->isSystemd();
+
+    # iMSCP::Service::hasService() only recognizes '.service' units, so the
+    # '.socket' unit must be looked up directly.
+    ( grep { -f "$_/clamav-daemon.socket" } qw(
+        /etc/systemd/system /run/systemd/system /usr/lib/systemd/system
+        /lib/systemd/system
+    ) ) ? 1 : 0;
+}
+
+=item _getSystemdDropIns( )
+
+ Get the systemd drop-in files to install
+
+ Return hash Drop-in file content indexed by unit name
+
+=cut
+
+sub _getSystemdDropIns
+{
+    my ( $self ) = @_;
+
+    my $header = <<'EOT';
+# Auto-generated by the i-MSCP ClamAV plugin
+#     DO NOT EDIT THIS FILE BY HAND -- YOUR CHANGES WILL BE OVERWRITTEN
+EOT
+
+    my %dropIns = (
+        'clamav-daemon.service' => <<"EOT",
+$header
+[Service]
+Restart=on-failure
+RestartSec=10s
+EOT
+    );
+
+    if ( _hasClamdSocketUnit() ) {
+        my $options = $self->{'config'}->{'clamd_options'};
+        $options->{'LocalSocketGroup'} =~ /^[a-z_][a-z0-9_-]*\z/ && $options->{'LocalSocketMode'} =~ /^[0-7]{3}\z/ or die(
+            'Invalid clamd socket options'
+        );
+        $dropIns{'clamav-daemon.socket'} = <<"EOT";
+$header#
+# The clamd socket is created by systemd (socket activation): clamd(8) then
+# ignores the clamd.conf(5) LocalSocketGroup and LocalSocketMode settings.
+[Socket]
+SocketGroup=$options->{'LocalSocketGroup'}
+SocketMode=0$options->{'LocalSocketMode'}
+EOT
+    }
+
+    my $milter = "$header\n[Service]\nRestart=on-failure\nRestartSec=10s\n";
+    unless ( grep { -f "$_/clamav-milter.service" } $SYSTEMD_UNIT_DIR, '/usr/lib/systemd/system', '/lib/systemd/system' ) {
+        # Unit generated from the SysV init script (RemainAfterExit=yes, no
+        # main PID). systemd needs to know the main PID to restart the service.
+        my $options = $self->{'config'}->{'clamav_milter_options'};
+        my $pidFile = ( $options->{'Foreground'} // '' ) =~ /^(?:yes|true|1)\z/i
+            ? '/run/clamav/daemon-clamav-milter.pid' : $options->{'PidFile'} // '';
+        $pidFile =~ s%^/var/run/%/run/%;
+        if ( $pidFile =~ m%^/run/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\z% && $pidFile !~ m%/\.\.?(?:/|\z)% ) {
+            $milter .= "RemainAfterExit=no\nPIDFile=$pidFile\n";
+        } else {
+            debug( "clamav-milter PidFile isn't set or is located outside of /run. Skipping systemd Restart setting." );
+            undef $milter;
+        }
+    }
+    $dropIns{'clamav-milter.service'} = $milter if defined $milter;
+
+    %dropIns;
+}
+
+=item _configureClamdSystemd( [ $action = 'deconfigure' ] )
+
+ Install or remove the systemd drop-in files
+
+ Param string $action Action to be performed (configure|deconfigure)
+ Return void, die on failure
+
+=cut
+
+sub _configureClamdSystemd
+{
+    my ( $self, $action ) = @_;
+
+    my $serviceMngr = iMSCP::Service->getInstance();
+    return unless $serviceMngr->isSystemd();
+
+    my %dropIns = $action eq 'configure' ? $self->_getSystemdDropIns() : ();
+    my $reload = 0;
+    for my $unit ( qw/ clamav-daemon.service clamav-daemon.socket clamav-milter.service / ) {
+        my $dir = "$SYSTEMD_UNIT_DIR/$unit.d";
+        my $file = "$dir/$SYSTEMD_DROPIN_FILENAME";
+
+        if ( defined $dropIns{$unit} ) {
+            _secureDir( $dir, 0, 0, 0755 );
+            _writeFileAtomic( $file, $dropIns{$unit}, 0, 0, 0644 );
+            $reload = 1;
+            next;
+        }
+
+        next unless lstat $file;
+        unlink( $file ) or die( sprintf( "Couldn't remove %s: %s", $file, $! ));
+        # Only if empty (distribution drop-in files are kept)
+        rmdir( $dir ) if -d $dir && !-l $dir;
+        $reload = 1;
+    }
+
+    $serviceMngr->getProvider()->daemonReload() if $reload;
+}
+
 =item _getPostfixMilterValue( $config )
 
  Get Postfix milter value (with per-milter default action) for the given configuration
@@ -759,15 +1108,33 @@ sub _configurePostfix
 
 sub _installDistributionPackages
 {
+    my ( $self ) = @_;
+
     local $ENV{'DEBIAN_FRONTEND'} = 'noninteractive';
-    # The clamav-milter.conf file is managed through UCF(1). Make sure that our
-    # changes are kept on package upgrades
+    # The clamav-milter.conf and clamd.conf files are managed through UCF(1).
+    # Make sure that our changes are kept on package upgrades
     local $ENV{'UCF_FORCE_CONFFOLD'} = 1;
 
     my $rs = execute( [ 'apt-get', 'update' ], \my $stdout, \my $stderr );
     debug( $stdout ) if $stdout;
     error( sprintf( "Couldn't update APT index: %s", $stderr || 'Unknown error' )) if $rs;
     return $rs if $rs;
+
+    # First installation: preseed the clamav-daemon debconf answers so that
+    # the clamd socket is never world-accessible (Debian default: 666). The
+    # clamd.conf file, when it exists, is authoritative (the clamav-daemon
+    # config script reads it) and is updated on plugin activation.
+    unless ( -e $CLAMD_CONF ) {
+        local $@;
+        eval {
+            my $options = $self->{'config'}->{'clamd_options'};
+            $self->_syncClamdDebconf( join '', map { "$_ $options->{$_}\n" } @CLAMD_MANAGED_KEYS );
+        };
+        if ( $@ ) {
+            error( $@ );
+            return 1;
+        }
+    }
 
     $rs = execute(
         [

@@ -107,6 +107,29 @@ return [
         Registry::get('config')['SERVER_HOSTNAME']
     ],
 
+    // Additional authserv-ids whose Authentication-Results header fields are
+    // removed from incoming mails (default: none)
+    //
+    // OpenDKIM removes (RemoveARAll/RemoveARFrom) all Authentication-Results
+    // header fields that claim to come from this server, so that results
+    // forged by a remote sender are never trusted by OpenDMARC, SpamAssassin
+    // or MUAs. The i-MSCP server hostname and the Postfix myhostname value are
+    // always included. Add here any other authserv-id that only this server
+    // may use (e.g. a custom OpenDMARC authserv-id). Don't add hosts that
+    // legitimately add such header fields before this server (e.g. a front
+    // relay listed in the OpenDMARC opendmarc_trusted_authserv_ids parameter).
+    'opendkim_remove_ar_from'       => [],
+
+    // Reject mails that don't comply with the RFC 5322 header field count
+    // requirements (RequiredHeaders) (default: no)
+    //
+    // When enabled, mails without (or with several) From or Date header
+    // fields, or with several To, Cc, Subject, Message-Id... header fields are
+    // rejected (550). This also blocks the multiple From header fields DMARC
+    // bypass, but rejects mails from some broken mailers and scripts (e.g.
+    // without Date header field). Possible values: yes, no
+    'opendkim_required_headers'     => 'no',
+
     // OpenDKIM user (default: opendkim)
     'opendkim_user'                 => 'opendkim',
 

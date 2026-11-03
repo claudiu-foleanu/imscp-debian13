@@ -45,6 +45,24 @@ return array(
     // Possible values: accept, reject, tempfail, quarantine (see postconf(5))
     'PostfixMilterDefaultAction'     => 'tempfail',
 
+    // The following configuration options are set in the /etc/clamav/clamd.conf file
+    // (and in the clamav-daemon.socket systemd unit, through a drop-in file)
+    //
+    // The clamd socket gives full control over the ClamAV daemon (SCAN of any
+    // file readable by clamd, RELOAD, SHUTDOWN...). It is only made accessible
+    // to its group. The clamav-milter user (see the 'User' option below) MUST
+    // be a member of that group. A world-accessible mode is refused: any local
+    // user (e.g. customer CGI scripts) could then shut down clamd and stall all
+    // mails (milter OnFail Defer).
+    //
+    // Note: Overridden distribution settings are commented out and restored on
+    // plugin deactivation. The clamav-daemon debconf answers are kept in sync
+    // so that the values survive clamav-daemon package upgrades.
+    'clamd_options'                  => array(
+        'LocalSocketGroup' => 'clamav',
+        'LocalSocketMode'  => '660'
+    ),
+
     // The following configuration options are added in the /etc/clamav/clamav-milter.conf file
     //
     // Note: If an options is missing, just add it with it name and it will be automatically added.
