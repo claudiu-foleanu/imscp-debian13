@@ -1,0 +1,30 @@
+{
+  "name": "imscp/elfinder",
+  "type": "imscp-tool",
+  "version": "1.1.0",
+  "license": "LGPL-2.1-only",
+  "description": "Provides a Web-based file manager for i-MSCP customers (elFinder over the local FTP server; upstream elFinder is fetched at setup time)",
+  "keywords": [
+    "iMSCP",
+    "tools",
+    "ftp",
+    "elfinder",
+    "filemanager"
+  ],
+  "homepage": "https://www.i-mscp.net/",
+  "authors": [
+    {
+      "name": "Laurent Declercq",
+      "email": "l.declercq@nuxwin.com",
+      "homepage": "https://www.i-mscp.net"
+    }
+  ],
+  "require": {
+    "php": "^7.3",
+    "ext-ftp": "*",
+    "ext-json": "*",
+    "ext-session": "*",
+    "ext-sodium": "*",
+    "imscp/composer-installers": "^1.1"
+  }
+}

@@ -25,7 +25,8 @@ package Package::WebFtpClients;
 
 use strict;
 use warnings;
-use iMSCP::Debug 'debug';
+use iMSCP::Debug qw/ debug error /;
+use iMSCP::File;
 use parent 'Package::AbstractPackageCollection';
 
 =head1 DESCRIPTION
@@ -72,7 +73,7 @@ sub getDefaultValues
 {
     my ( $self ) = @_;
 
-    'No';
+    'ElFinder';
 }
 
 =item getPackageHumanName( )
@@ -90,12 +91,15 @@ sub getPackageHumanName
 
 =item getDeprecatedPackages( )
 
- Get list of deprecated packages
+ Get deprecated packages
 
  Deprecated packages are no longer offered, even if their Perl module is still
- provided. The i-MSCP MonstaFTP package is no longer available.
+ provided. The i-MSCP MonstaFTP package is no longer available (sources lost,
+ and MonstaFTP <= 2.11 is affected by CVE-2025-34299). It is replaced by the
+ ElFinder package.
 
- Return list of package names
+ Return hash Deprecated package names mapped to replacement package names
+             (empty string if there is no replacement)
 
 =cut
 
@@ -103,15 +107,16 @@ sub getDeprecatedPackages
 {
     my ( $self ) = @_;
 
-    qw/ MonstaFTP /;
+    ( MonstaFTP => 'ElFinder' );
 }
 
 =item registerSetupListeners( \%events )
 
  See Package::AbstractPackageCollection::registerSetupListeners()
 
- Deprecated packages are silently dropped from the list of selected packages
- (upgrade from a previous version in which they were selected).
+ Deprecated packages are replaced by their replacement package in the list of
+ selected packages (upgrade from a previous version in which they were
+ selected).
 
 =cut
 
@@ -119,20 +124,37 @@ sub registerSetupListeners
 {
     my ( $self, $events ) = @_;
 
-    my %deprecated = map { $_ => 1 } $self->getDeprecatedPackages();
+    my %deprecated = $self->getDeprecatedPackages();
     my @selected = split ',', ::setupGetQuestion( $self->getConfVarname());
-    my @kept = grep { !$deprecated{$_} } @selected;
 
-    if ( @kept != @selected ) {
+    if ( grep { exists $deprecated{$_} } @selected ) {
+        my %seen;
+        my @kept = grep { length $_ && !$seen{$_}++ } map {
+            exists $deprecated{$_} ? $deprecated{$_} : $_
+        } @selected;
+
+        @kept = grep { $_ ne 'No' } @kept if grep { $_ ne 'No' } @kept;
+
         debug( sprintf(
-            'Dropping deprecated %s package(s): %s',
+            'Replacing deprecated %s package(s): %s => %s',
             $self->getPackageHumanName(),
-            join( ', ', grep { $deprecated{$_} } @selected )
+            join( ', ', @selected ),
+            @kept ? join( ', ', @kept ) : 'No'
         ));
+
         ::setupSetQuestion(
-            $self->getConfVarname(),
-            @kept ? join( ',', @kept ) : $self->getDefaultValues()
+            $self->getConfVarname(), @kept ? join( ',', @kept ) : 'No'
         );
+
+        # Remove leftover of the MonstaFTP package (its Nginx configuration
+        # file is no longer included, but should not be kept around)
+        my $rs = $events->registerOne( 'beforeSetupServersAndPackages', sub {
+            return 0 unless -f '/etc/nginx/imscp_monstaftp.conf';
+            iMSCP::File->new(
+                filename => '/etc/nginx/imscp_monstaftp.conf'
+            )->delFile();
+        } );
+        return $rs if $rs;
     }
 
     $self->SUPER::registerSetupListeners( $events );
@@ -176,8 +198,8 @@ sub _init
 
     $self->SUPER::_init();
 
-    my %deprecated = map { $_ => 1 } $self->getDeprecatedPackages();
-    @{ $self->{'PACKAGES'} } = grep { !$deprecated{$_} } @{ $self->{'PACKAGES'} };
+    my %deprecated = $self->getDeprecatedPackages();
+    @{ $self->{'PACKAGES'} } = grep { !exists $deprecated{$_} } @{ $self->{'PACKAGES'} };
     $self;
 }
 

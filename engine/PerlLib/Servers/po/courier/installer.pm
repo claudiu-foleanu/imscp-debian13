@@ -899,6 +899,18 @@ sub _migrateFromDovecot
     error( $stderr || 'Unknown error' ) if $rs;
     return $rs if $rs;
 
+    # Courier lists any dot entry of the maildir root as a mailbox. Remove the
+    # Dovecot sieve active script symlink and compiled binary (the sieve
+    # scripts themselves are kept in the ~/sieve directory). Sieve filtering
+    # isn't available with Courier.
+    for my $entry (
+        glob( "$self->{'mta'}->{'config'}->{'MTA_VIRTUAL_MAIL_DIR'}/*/*/.dovecot.sieve" ),
+        glob( "$self->{'mta'}->{'config'}->{'MTA_VIRTUAL_MAIL_DIR'}/*/*/.dovecot.svbin" )
+    ) {
+        next if $entry =~ /\.dovecot\.sieve$/ && !-l $entry;
+        unlink $entry or debug( sprintf( "Couldn't remove %s: %s", $entry, $! ));
+    }
+
     $self->{'po'}->{'forceMailboxesQuotaRecalc'} = TRUE;
     $::imscpOldConfig{'PO_SERVER'} = 'courier';
     $::imscpOldConfig{'PO_PACKAGE'} = 'Servers::po::courier';

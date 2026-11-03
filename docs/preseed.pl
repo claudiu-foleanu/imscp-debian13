@@ -537,11 +537,13 @@ use warnings;
 
     # Web FTP clients
     #
-    # Possible values: 'No'
-    # There is currently no Web FTP client package available (the MonstaFTP
-    # package has been removed; if previously selected, it is dropped).
+    # Possible values: 'No' or 'ElFinder'
+    # ElFinder: Web-based file manager in which customers log in with their FTP
+    # account credentials; all file operations go through the local FTP server.
+    # It replaces the MonstaFTP package (removed; if previously selected, it is
+    # replaced by ElFinder).
     #
-    # Leave this parameter blank for use of default value: No
+    # Leave this parameter blank for use of default value: ElFinder
     WEB_FTP_CLIENT_PACKAGES             => '',
 
     # SQL administrator tool packages

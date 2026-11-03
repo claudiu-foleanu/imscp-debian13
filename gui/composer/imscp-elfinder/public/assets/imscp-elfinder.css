@@ -1,0 +1,103 @@
+/* i-MSCP Web-based file manager */
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    color: #333;
+    background: #f2f2f2;
+}
+
+body.login {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.login-box {
+    width: 320px;
+    max-width: calc(100% - 32px);
+    padding: 24px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .08);
+}
+
+.login-box h1 {
+    margin: 0 0 8px;
+    font-size: 20px;
+}
+
+.login-box .hint {
+    margin: 0 0 16px;
+    color: #666;
+}
+
+.login-box .error {
+    margin: 0 0 16px;
+    padding: 8px;
+    color: #a94442;
+    background: #f2dede;
+    border: 1px solid #ebccd1;
+    border-radius: 3px;
+}
+
+.login-box label {
+    display: block;
+    margin: 0 0 4px;
+    font-weight: bold;
+}
+
+.login-box input[type=text],
+.login-box input[type=password] {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0 0 12px;
+    padding: 8px;
+    font-size: 14px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+.login-box button,
+#imscp-header button {
+    padding: 8px 16px;
+    font-size: 14px;
+    color: #fff;
+    background: #337ab7;
+    border: 1px solid #2e6da4;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+#imscp-header {
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    height: 44px;
+    padding: 0 12px;
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+}
+
+#imscp-header .title {
+    font-weight: bold;
+    font-size: 16px;
+}
+
+#imscp-header .user {
+    margin-left: auto;
+    margin-right: 12px;
+    color: #666;
+}
+
+#imscp-header form {
+    margin: 0;
+}
+
+#imscp-header button {
+    padding: 4px 12px;
+}

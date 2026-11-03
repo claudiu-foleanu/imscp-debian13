@@ -48,6 +48,13 @@
     },
     {
       "type": "path",
+      "url": "composer/imscp-elfinder",
+      "options": {
+        "symlink": false
+      }
+    },
+    {
+      "type": "path",
       "url": "composer/imscp-phpmyadmin",
       "options": {
         "symlink": false
@@ -133,6 +140,7 @@
   "extra": {
     "installer-paths": {
       "vendor/{$vendor}/{$name}": [
+        "imscp/elfinder",
         "imscp/phpmyadmin",
         "imscp/roundcube"
       ]

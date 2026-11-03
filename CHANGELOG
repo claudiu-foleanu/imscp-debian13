@@ -55,6 +55,8 @@ DEBIAN 13 (TRIXIE) SUPPORT
            error), making the VsFTPD server unusable
     Fixed: Postfix >= 3.6: compatibility_level set to 3.6 (backwards-compatible
            default settings warnings)
+    Fixed: Courier: Dovecot sieve files listed as mailboxes after migration
+           from Dovecot
 
 WEB ADD-ONS (the i-MSCP GitHub repositories of the add-on packages are gone)
     Rewritten: Roundcube and phpMyAdmin integration packages are now bundled
@@ -64,6 +66,7 @@ WEB ADD-ONS (the i-MSCP GitHub repositories of the add-on packages are gone)
              at setup time and verified against pinned SHA-256 checksums
     Enhancement: Roundcube managesieve (Dovecot) and password plugins enabled
     Removed: RainLoop (abandoned upstream) and MonstaFTP (sources lost)
+    Added: elFinder 2.1.70 Web file manager over local FTP (replaces MonstaFTP)
 
 BACKEND
     Added: Apache2 wildcard alias feature

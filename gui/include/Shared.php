@@ -2811,7 +2811,8 @@ function getWebFtpClientPackages()
     return array_filter(
         explode(',', Registry::get('config')['WEB_FTP_CLIENT_PACKAGES']),
         function ($value) {
-            // MonstaFTP is no longer provided by i-MSCP
+            // MonstaFTP is no longer provided by i-MSCP (replaced by
+            // ElFinder at next i-MSCP reconfiguration)
             return $value != 'No' && $value != 'MonstaFTP';
         }
     );
