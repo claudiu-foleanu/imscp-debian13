@@ -1,0 +1,59 @@
+<script src="/OpenDKIM/themes/default/assets/js/clipboard.min.js?v={OPENDKIM_ASSET_VERSION}"></script>
+<script>
+    $(function () {
+        function flashMessage(type, message) {
+            $(".flash_message").remove();
+            $("<div>", {
+                "class": "flash_message " + type,
+                "text": message,
+                "hide": true
+            }).prependTo(".body").trigger('message_timeout');
+        }
+
+        $(".datatable").dataTable({
+            language: <?= getDataTablesPluginTranslations(); ?>,
+            displayLength: 10,
+            stateSave: true,
+            pagingType: "simple",
+            columnDefs: [{sortable: false, searchable: false, targets: [0]}]
+        });
+
+        var clipboard = new Clipboard('.clipboard');
+        clipboard.on('success', function () {
+            flashMessage("success", "<?= tojs(tr('Data successfully copied to clipboard.')); ?>");
+        });
+    });
+</script>
+<h3 class="email"><?= tohtml(tr('DKIM DNS records (Keys)')); ?></h3>
+<p class="hint"><?= tohtml(tr('If the DNS zones of your domains are not managed by this server, you must add the DKIM DNS records below at your DNS provider.')); ?></p>
+<br>
+<table class="datatable">
+    <thead>
+    <tr>
+        <th><?= tohtml(tr('Status')); ?></th>
+        <th><?= tohtml(tr('Zone Name')); ?></th>
+        <th><?= tohtml(tr('Name')); ?></th>
+        <th><?= tohtml(tr('TTL')); ?></th>
+        <th><?= tohtml(tr('Data')); ?></th>
+    </tr>
+    </thead>
+    <tbody>
+    <!-- BDP: dkim_key_dns_entry -->
+    <tr>
+        <td><span class="icon i_{STATUS_ICON}">{DNS_STATUS}</span></td>
+        <td>{DNS_ZONE_NAME}</td>
+        <td>{DNS_NAME}</td>
+        <td>{DNS_TTL}</td>
+        <td>
+            <!-- BDP: dkim_key_to_clipboard -->
+            <input type="button" class="clipboard" title="{DNS_RDATA}" data-clipboard-text="{DNS_RDATA}" value="<?= tohtml(tr('Copy data to clipboard (RFC compliant)'), 'htmlAttr'); ?>">
+            <input type="button" class="clipboard" title="{DNS_RDATA_SINGLE}" data-clipboard-text="{DNS_RDATA_SINGLE}" value="<?= tohtml(tr('Copy data to clipboard'), 'htmlAttr'); ?>">
+            <!-- EDP: dkim_key_to_clipboard -->
+            <!-- BDP: dkim_key_na -->
+            <?= tohtml(tr('N/A')); ?>
+            <!-- EDP: dkim_key_na -->
+        </td>
+    </tr>
+    <!-- EDP: dkim_key_dns_entry -->
+    </tbody>
+</table>

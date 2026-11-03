@@ -77,6 +77,14 @@ PLUGINS
            ported to the Debian certbot package (webroot authenticator,
            shared ACME challenge directory, certbot.timer renewals with deploy
            hook), security fixes (shell/SQL injection, CSRF, XSS, ownership)
+    Added: OpenDKIM 2.2.0, PolicydSPF 1.3.0 and PolicydWeight 1.4.0 plugins
+           bundled; ported to Debian 13 (opendkim 2.11 socket in Postfix
+           chroot, postfix-policyd-spf-python, policyd-weight systemd unit
+           fix), ADSP removed, dead DNSBLs removed, security fixes
+    Fixed: Postfix policy service restrictions were duplicated on re-enable
+           and never removed on disable (PolicydSPF, PolicydWeight)
+    Enhancement: Bundled plugins are no longer overwritten by older
+                 installed copies on update (autoinstaller)
     Added: elFinder 2.1.70 Web file manager over local FTP (replaces MonstaFTP)
 
 BACKEND

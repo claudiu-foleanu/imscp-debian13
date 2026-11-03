@@ -644,11 +644,38 @@ sub _savePersistentData
     ) if -d "$::imscpConfig{'GUI_ROOT_DIR'}/bin";
 
     # Save plugins
-    iMSCP::Dir->new(
-        dirname => "$::imscpConfig{'PLUGINS_DIR'}"
-    )->rcopy(
-        "$destdir$::imscpConfig{'PLUGINS_DIR'}", { preserve => 'no' }
-    ) if -d $::imscpConfig{'PLUGINS_DIR'};
+    #
+    # Plugins bundled with the distribution are not overwritten by the
+    # installed copy unless the installed copy is newer. This makes it possible
+    # to deliver plugin updates through i-MSCP updates (the administrator
+    # then updates the plugin through the plugin management interface).
+    if ( -d $::imscpConfig{'PLUGINS_DIR'} ) {
+        for my $entry (
+            iMSCP::Dir->new( dirname => $::imscpConfig{'PLUGINS_DIR'} )->getAll()
+        ) {
+            my $src = "$::imscpConfig{'PLUGINS_DIR'}/$entry";
+            my $dst = "$destdir$::imscpConfig{'PLUGINS_DIR'}/$entry";
+
+            if ( -d $src ) {
+                if ( -d $dst ) {
+                    my $bundledVersion = _getPluginVersion( "$dst/info.php" );
+                    my $installedVersion = _getPluginVersion( "$src/info.php" );
+                    next if defined $bundledVersion && ( !defined $installedVersion
+                        || eval {
+                            version->parse( $bundledVersion ) >= version->parse( $installedVersion )
+                        }
+                    );
+                    iMSCP::Dir->new( dirname => $dst )->remove();
+                }
+
+                iMSCP::Dir->new( dirname => $src )->rcopy( $dst, { preserve => 'no' } );
+                next;
+            }
+
+            next if -e $dst;
+            iMSCP::File->new( filename => $src )->copyFile( $dst, { preserve => 'no' } );
+        }
+    }
 
     # Save package handlers if any
     if ( -d "$::imscpConfig{'ENGINE_ROOT_DIR'}/PerlLib/Package" ) {
@@ -1060,6 +1087,27 @@ sub _chmodFile
     debug( $stdout ) if length $stdout;
     error( $stderr || 'Unknown error' ) if $rs;
     $rs;
+}
+
+=item _getPluginVersion( $infoFile )
+
+ Get plugin version from the given plugin info.php file
+
+ Param string $infoFile Plugin info.php file path
+ Return string|undef Plugin version or undef if not found
+
+=cut
+
+sub _getPluginVersion
+{
+    my ( $infoFile ) = @_;
+
+    return undef unless -f $infoFile;
+    open my $fh, '<', $infoFile or return undef;
+    local $/;
+    my $content = <$fh>;
+    close( $fh );
+    $content =~ /['"]version['"]\s*=>\s*['"]([^'"]+)['"]/ ? $1 : undef;
 }
 
 =back
