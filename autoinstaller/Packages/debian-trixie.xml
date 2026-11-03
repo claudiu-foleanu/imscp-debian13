@@ -238,7 +238,6 @@
         <php7.3
                 always_installed="1"
                 class="Servers::php"
-                default="1"
                 description="PHP 7.3"
         >
             <package
@@ -470,6 +469,7 @@
         <php8.4
                 always_installed="1"
                 class="Servers::php"
+                default="1"
                 description="PHP 8.4"
         >
             <package

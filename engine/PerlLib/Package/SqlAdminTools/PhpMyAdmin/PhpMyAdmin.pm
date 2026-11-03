@@ -38,8 +38,10 @@ use subs qw/
     setGuiPermissions setEnginePermissions
 /;
 
-my $packageVersionConstraint = $ENV{'IMSCP_PKG_DEVELOPMENT'}
-    ? '4.8.x-dev' : '^1.0';
+# The imscp/phpmyadmin package is bundled with i-MSCP (path repository: see
+# gui/composer.json). It fetches the pinned upstream phpMyAdmin release at
+# setup time.
+my $packageVersionConstraint = '^1.1';
 
 =head1 DESCRIPTION
 

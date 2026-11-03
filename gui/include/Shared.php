@@ -2811,7 +2811,8 @@ function getWebFtpClientPackages()
     return array_filter(
         explode(',', Registry::get('config')['WEB_FTP_CLIENT_PACKAGES']),
         function ($value) {
-            return $value != 'No';
+            // MonstaFTP is no longer provided by i-MSCP
+            return $value != 'No' && $value != 'MonstaFTP';
         }
     );
 }
@@ -2826,7 +2827,8 @@ function getWebmailClientPackages()
     return array_filter(
         explode(',', Registry::get('config')['WEB_MAIL_CLIENT_PACKAGES']),
         function ($value) {
-            return $value != 'No';
+            // RainLoop is no longer provided by i-MSCP
+            return $value != 'No' && $value != 'RainLoop';
         }
     );
 }

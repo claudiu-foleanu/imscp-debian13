@@ -45,6 +45,20 @@
       "options": {
         "symlink": false
       }
+    },
+    {
+      "type": "path",
+      "url": "composer/imscp-phpmyadmin",
+      "options": {
+        "symlink": false
+      }
+    },
+    {
+      "type": "path",
+      "url": "composer/imscp-roundcube",
+      "options": {
+        "symlink": false
+      }
     }
   ],
   "require": {
@@ -119,9 +133,7 @@
   "extra": {
     "installer-paths": {
       "vendor/{$vendor}/{$name}": [
-        "imscp/monsta-ftp",
         "imscp/phpmyadmin",
-        "imscp/rainloop",
         "imscp/roundcube"
       ]
     },

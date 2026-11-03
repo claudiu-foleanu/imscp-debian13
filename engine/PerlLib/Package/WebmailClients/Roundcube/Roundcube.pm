@@ -42,8 +42,10 @@ use subs qw/
     predisableMail disableMail postdisableMail
 /;
 
-my $packageVersionConstraint = $ENV{'IMSCP_PKG_DEVELOPMENT'}
-    ? '1.3.x-dev' : '1.3.x-dev';
+# The imscp/roundcube package is bundled with i-MSCP (path repository: see
+# gui/composer.json). It fetches the pinned upstream Roundcube release at setup
+# time.
+my $packageVersionConstraint = '^1.1';
 
 =head1 DESCRIPTION
 

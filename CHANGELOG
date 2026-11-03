@@ -44,6 +44,15 @@ DEBIAN 13 (TRIXIE) SUPPORT
            the port) (imscp-net-traffic-logger)
     Fixed: imscp-srv-traff always exited with status 1 on success
 
+WEB ADD-ONS (the i-MSCP GitHub repositories of the add-on packages are gone)
+    Rewritten: Roundcube and phpMyAdmin integration packages are now bundled
+               (gui/composer/imscp-roundcube, gui/composer/imscp-phpmyadmin);
+               integration code recovered from Software Heritage archive
+    Updated: Roundcube 1.6.20 and phpMyAdmin 5.2.3, downloaded from upstream
+             at setup time and verified against pinned SHA-256 checksums
+    Enhancement: Roundcube managesieve (Dovecot) and password plugins enabled
+    Removed: RainLoop (abandoned upstream) and MonstaFTP (sources lost)
+
 BACKEND
     Added: Apache2 wildcard alias feature
     Added: Array::Utils library (PerlVendor)

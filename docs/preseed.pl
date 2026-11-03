@@ -405,9 +405,10 @@ use warnings;
 
     # PHP version for customers
     #
-    # Possible values: php5.6, php7.0, php7.1, php7.2, php7.3 (recommended), php7.4,
-    #                  php8.0, php8.1, php8.2, php8.3 or php8.4, depending on the
-    #                  versions available for your distribution
+    # Possible values: php5.6, php7.0, php7.1, php7.2, php7.3, php7.4,
+    #                  php8.0, php8.1, php8.2, php8.3 or php8.4, depending on
+    #                  the versions available for your distribution (default:
+    #                  php7.3, or php8.4 for Debian 13)
     #
     # Leave this parameter blank for us of default value: Default PHP version
     # as set in distribution packages file.
@@ -536,16 +537,18 @@ use warnings;
 
     # Web FTP clients
     #
-    # Possible values: 'No', or a list of packages, each comma separated.
-    # Available packages are: MonstaFTP
+    # Possible values: 'No'
+    # There is currently no Web FTP client package available (the MonstaFTP
+    # package has been removed; if previously selected, it is dropped).
     #
-    # Leave this parameter blank for use of default value: MonstaFTP
+    # Leave this parameter blank for use of default value: No
     WEB_FTP_CLIENT_PACKAGES             => '',
 
     # SQL administrator tool packages
     #
     # Possible values: 'No', or a list of packages, each comma separated.
-    # Available packages are: PhpMyAdmin
+    # Available packages are: PhpMyAdmin (phpMyAdmin 5.2.x, fetched from
+    # files.phpmyadmin.net at setup time)
     #
     # Leave this parameter blank for use of default value: PhpMyAdmin
     SQL_ADMIN_TOOL_PACKAGES             => '',
@@ -553,9 +556,11 @@ use warnings;
     # Webmail client packages
     #
     # Possible values: 'No', or a list of packages, each comma separated.
-    # Available packages are: RainLoop, Roundcube
+    # Available packages are: Roundcube (Roundcube 1.6.x, fetched from the
+    # Roundcube GitHub releases at setup time). The RainLoop package has been
+    # removed (abandoned upstream); if previously selected, it is dropped.
     #
-    # Leave this parameter blank for use of default value: RainLoop,Roundcube
+    # Leave this parameter blank for use of default value: Roundcube
     WEB_MAIL_CLIENT_PACKAGES            => '',
 
     # Antirootkits packages
