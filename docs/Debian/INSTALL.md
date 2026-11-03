@@ -18,6 +18,24 @@
   `/etc/apt/keyrings` directory as the `apt-key` command is no longer
   available. Both `/etc/apt/sources.list` and the deb822
   `/etc/apt/sources.list.d/*.sources` formats are supported.
+- Customer PHP defaults to PHP 8.4 (all versions from 5.6 to 8.4 can be
+  selected through the `PHP_SERVER` parameter).
+- Web add-ons: Roundcube 1.6 (webmail), phpMyAdmin 5.2 and elFinder (web
+  file manager over FTP, replaces MonstaFTP) are downloaded from upstream at
+  setup time and verified against pinned SHA-256 checksums. RainLoop and
+  MonstaFTP are no longer available.
+- Tested server implementations: Apache2 (PHP-FPM, FastCGI and ITK),
+  Dovecot and Courier, ProFTPD and VsFTPD, Bind9, Postfix, local MariaDB.
+
+### DNS requirements
+
+For mail to be accepted by other mail servers, make sure that, in the public
+DNS:
+
+- the server hostname (e.g. `server.example.com`) and the control panel
+  hostname (e.g. `panel.example.com`) resolve to the server IP address
+- the reverse DNS (PTR record) of the server IP address points to the server
+  hostname
 
 ## Installation
 
