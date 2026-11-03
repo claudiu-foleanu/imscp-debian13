@@ -65,7 +65,13 @@ sub connect
         # Don't issue SET NAMES as the DBD::MariaDB driver already issue
         # "SET NAMES utf8mb4" via C library function.
         # See https://github.com/i-MSCP/imscp/commit/39185a0619eabdc317916817de22d5878e00ba11#r33912557
-        "SESSION sql_mode = 'NO_AUTO_CREATE_USER',"
+        #
+        # The session variables must be set through the mariadb_init_command
+        # attribute. Without the attribute name, the DSN element is silently
+        # ignored by the driver, leading to the server default SQL mode
+        # (strict mode) being used, unlike with the MySQL adapter and the
+        # frontEnd.
+        "mariadb_init_command=SET SESSION sql_mode = 'NO_AUTO_CREATE_USER', "
             . 'SESSION group_concat_max_len = 65535'
     );
 

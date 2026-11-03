@@ -25,6 +25,7 @@ package Package::WebmailClients;
 
 use strict;
 use warnings;
+use iMSCP::Debug 'debug';
 use parent 'Package::AbstractPackageCollection';
 
 =head1 DESCRIPTION
@@ -71,7 +72,7 @@ sub getDefaultValues
 {
     my ( $self ) = @_;
 
-    'RainLoop,Roundcube';
+    'Roundcube';
 }
 
 =item getPackageHumanName( )
@@ -85,6 +86,80 @@ sub getPackageHumanName
     my ( $self ) = @_;
 
     'webmail clients';
+}
+
+=item getDeprecatedPackages( )
+
+ Get list of deprecated packages
+
+ Deprecated packages are no longer offered, even if their Perl module is still
+ provided. RainLoop is abandoned upstream and its i-MSCP package is no longer
+ available.
+
+ Return list of package names
+
+=cut
+
+sub getDeprecatedPackages
+{
+    my ( $self ) = @_;
+
+    qw/ RainLoop /;
+}
+
+=item registerSetupListeners( \%events )
+
+ See Package::AbstractPackageCollection::registerSetupListeners()
+
+ Deprecated packages are silently dropped from the list of selected packages
+ (upgrade from a previous version in which they were selected).
+
+=cut
+
+sub registerSetupListeners
+{
+    my ( $self, $events ) = @_;
+
+    my %deprecated = map { $_ => 1 } $self->getDeprecatedPackages();
+    my @selected = split ',', ::setupGetQuestion( $self->getConfVarname());
+    my @kept = grep { !$deprecated{$_} } @selected;
+
+    if ( @kept != @selected ) {
+        debug( sprintf(
+            'Dropping deprecated %s package(s): %s',
+            $self->getPackageHumanName(),
+            join( ', ', grep { $deprecated{$_} } @selected )
+        ));
+        ::setupSetQuestion(
+            $self->getConfVarname(),
+            @kept ? join( ',', @kept ) : $self->getDefaultValues()
+        );
+    }
+
+    $self->SUPER::registerSetupListeners( $events );
+}
+
+=back
+
+=head1 PRIVATE METHODS
+
+=over 4
+
+=item _init( )
+
+ See Package::AbstractPackageCollection::_init()
+
+=cut
+
+sub _init
+{
+    my ( $self ) = @_;
+
+    $self->SUPER::_init();
+
+    my %deprecated = map { $_ => 1 } $self->getDeprecatedPackages();
+    @{ $self->{'PACKAGES'} } = grep { !$deprecated{$_} } @{ $self->{'PACKAGES'} };
+    $self;
 }
 
 =back

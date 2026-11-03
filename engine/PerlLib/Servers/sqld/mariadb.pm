@@ -29,6 +29,7 @@ use Class::Autouse qw/ :nostat Servers::sqld::mariadb::installer Servers::sqld::
 use iMSCP::Boolean;
 use iMSCP::Service;
 use iMSCP::Database;
+use iMSCP::Debug 'error';
 use parent 'Servers::sqld::mysql';
 
 =head1 DESCRIPTION
@@ -123,7 +124,7 @@ sub createUser
 
     defined $user or die( '$user parameter is not defined' );
     defined $host or die( '$host parameter is not defined' );
-    defined $user or die( '$password parameter is not defined' );
+    defined $password or die( '$password parameter is not defined' );
 
     eval {
         my $dbh = iMSCP::Database->factory()->getRawDb();

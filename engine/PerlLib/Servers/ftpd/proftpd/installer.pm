@@ -451,6 +451,12 @@ sub _buildConfigFile
                 < version->parse( '1.3.6' ) ? 'NoCertRequest ' : (),
             'NoSessionReuseRequired'
         )),
+        # Old TLS versions (TLSv1.0, TLSv1.1) are deprecated and disabled in
+        # OpenSSL >= 3 default security level. TLSv1.3 is supported since
+        # ProFTPD 1.3.6
+        TLSPROTOCOL             => version->parse(
+            $self->{'config'}->{'PROFTPD_VERSION'}
+        ) < version->parse( '1.3.6' ) ? 'TLSv1.2' : 'TLSv1.2 TLSv1.3',
         MAX_INSTANCES           => $self->{'config'}->{'MAX_INSTANCES'},
         MAX_CLIENT_PER_HOST     => $self->{'config'}->{'MAX_CLIENT_PER_HOST'}
     };
@@ -489,7 +495,7 @@ sub _buildConfigFile
 </IfModule>
 </Global>
 <IfModule mod_tls.c>
-  TLSProtocol TLSv1
+  TLSProtocol {TLSPROTOCOL}
 </IfModule>
 EOF
     }
@@ -513,6 +519,20 @@ MasqueradeAddress $baseServerPublicIp
     ServerName "{HOSTNAME}.local"
 </VirtualHost>
 EOF
+    }
+
+    # The MultilineRFC2228 directive is deprecated since ProFTPD 1.3.7
+    if ( version->parse( $self->{'config'}->{'PROFTPD_VERSION'} )
+        >= version->parse( '1.3.7' )
+    ) {
+        $cfgTpl =~ s/^[\t ]*MultilineRFC2228\s+[^\n]*\n//m;
+    }
+
+    # Since ProFTPD 1.3.6 (Debian >= Bookworm), the mod_tls module is
+    # provided by the proftpd-mod-crypto package. We do not want ProFTPD fail
+    # to start if that module isn't available
+    if ( -d '/usr/lib/proftpd' && !-f '/usr/lib/proftpd/mod_tls.so' ) {
+        $cfgTpl =~ s%^<IfModule\s+!mod_tls\.c>\n\s*LoadModule\s+mod_tls\.c\n</IfModule>\n%%m;
     }
 
     $cfgTpl = process( $data, $cfgTpl );

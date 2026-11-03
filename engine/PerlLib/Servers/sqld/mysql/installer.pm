@@ -389,7 +389,7 @@ sub _dialogForMasterSqlUsername
     if ( $dialog->executeRetval != 30
         && !grep ( $_ eq iMSCP::Getopt->reconfigure, qw/ sql servers all / )
         && isValidUsername( $dbUser )
-        && isStringNotInList( $dbUser, qw/ debian-sys-maint mysql.user root / )
+        && isStringNotInList( $dbUser, qw/ debian-sys-maint mariadb.sys mysql.sys mysql.user root / )
     ) {
         ::setupSetQuestion( 'DATABASE_USER', $dbUser );
         return 20;
@@ -404,7 +404,7 @@ EOF
             $dbUser =~ s/^\s+|\s+$//g;
 
             if ( !isValidUsername( $dbUser )
-                || !isStringNotInList( $dbUser, qw/ debian-sys-maint mysql.user root / )
+                || !isStringNotInList( $dbUser, qw/ debian-sys-maint mariadb.sys mysql.sys mysql.user root / )
             ) {
                 $msg = $LAST_VALIDATION_ERROR;
             } else {
@@ -681,11 +681,12 @@ sub _setTypeAndVersion
             $type = 'percona';
         }
 
+        # Version string examples:
+        #  - 10.3.39-MariaDB-0+deb10u1
+        #  - 11.8.6-MariaDB-0+deb13u1
+        #  - 8.0.36
         my ( $version ) = $row->{'@@version'} =~ /^([0-9]+(?:\.[0-9]+){1,2})/;
-        unless ( defined $version ) {
-            error( "Couldn't find SQL server version" );
-            return 1;
-        }
+        defined $version or die( "Couldn't find SQL server version" );
 
         debug( sprintf( 'SQL server type set to: %s', $type ));
         $self->{'config'}->{'SQLD_TYPE'} = $type;
@@ -991,22 +992,34 @@ sub _setupSecureInstallation
         my $oldDbName = $db->useDatabase( 'mysql' );
         my $dbh = $db->getRawDb();
 
+        # As of MariaDB 10.4, the mysql.user table is a view which is not
+        # updatable. Thus, SQL accounts are removed through the DROP USER
+        # statement, which is supported by all SQL server vendors/versions.
+
         # Remove anonymous users
-        $dbh->do( "DELETE FROM `user` WHERE `User` = ''" );
+        for my $account ( @{ $dbh->selectall_arrayref(
+            "SELECT `User`, `Host` FROM `user` WHERE `User` = ''"
+        ) } ) {
+            $dbh->do( 'DROP USER ?@?', undef, @{ $account } );
+        }
+
         # Remove test database if any
         $dbh->do( 'DROP DATABASE IF EXISTS `test`' );
-        # Remove privileges on test database
+        # Remove privileges on test database (the mysql.db table is still a
+        # regular table, including with MariaDB >= 10.4)
         $dbh->do( "DELETE FROM `db` WHERE `Db` = 'test' OR `Db` = 'test\\_%'" );
 
         # Disallow remote root login
         if ( $::imscpConfig{'SQL_SERVER'} ne 'remote_server' ) {
-            $dbh->do(
+            for my $account ( @{ $dbh->selectall_arrayref(
                 "
-                    DELETE FROM `user`
+                    SELECT `User`, `Host` FROM `user`
                     WHERE `User` = 'root'
                     AND `Host` NOT IN ('localhost', '127.0.0.1', '::1')
                 "
-            );
+            ) } ) {
+                $dbh->do( 'DROP USER ?@?', undef, @{ $account } );
+            }
         }
 
         $dbh->do( 'FLUSH PRIVILEGES' );
@@ -1050,7 +1063,7 @@ sub _setupDatabase
             $dbh->do(
                 "
                     CREATE DATABASE IF NOT EXISTS $qdbName
-                    CHARACTER SET utf8 COLLATE utf8_unicode_ci;
+                    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
                 "
             );
         };
@@ -1059,8 +1072,11 @@ sub _setupDatabase
             return 1;
         }
 
+        # As of MariaDB 11.0, the mysql* program names are deprecated
+        # compatibility symlinks that print a warning on STDERR.
         $rs = execute(
-            '/usr/bin/mysql ' . escapeShell( $dbName ) . ' < '
+            ( -x '/usr/bin/mariadb' ? '/usr/bin/mariadb ' : '/usr/bin/mysql ' )
+                . escapeShell( $dbName ) . ' < '
                 . "$::imscpConfig{'CONF_DIR'}/database/database.sql",
             \my $stdout,
             \my $stderr
@@ -1130,48 +1146,45 @@ sub _updateCustomerSqlUsers
             'sqlu_id'
         );
 
+        my %renamed;
         for my $sqluID ( keys %{ $rows } ) {
             # Skip update of the SQL user hostname which value was other than
             # the old default hostname. The frontEnd allows a custom host for
             # SQL users.
             next unless $rows->{$sqluID}->{'sqlu_host'} eq $oldHost;
 
-            eval {
-                $dbh->begin_work();
+            my $user = $rows->{$sqluID}->{'sqlu_name'};
 
-                # Update hostname in i-MSCP sql_user database table
-                $dbh->do(
-                    'UPDATE `sql_user` SET `sqlu_host` = ? WHERE `sqlu_id` = ?',
-                    undef, $newHost, $sqluID
-                );
-                # Update hostname in SQL server privilege tables
-                $dbh->do(
-                    'UPDATE `mysql`.`user` SET `Host` = ? WHERE `User` = ?',
-                    undef, $newHost, $rows->{$sqluID}->{'sqlu_name'}
-                );
-                $dbh->do(
-                    'UPDATE `mysql`.`db` SET `Host` = ? WHERE `User` = ?',
-                    undef, $newHost, $rows->{$sqluID}->{'sqlu_name'}
-                );
-                # Not needed as customer SQL users privileges are set on a per
-                # database basis
-                #$dbh->do(
-                #    'UPDATE `mysql`.`tables_priv` SET `Host` = ? WHERE `User` = ?',
-                #    undef, $newHost, $rows->{$sqluID}->{'sqlu_name'}
-                #);
-                # Not needed as customer SQL users privileges are set on a per
-                # database basis
-                #$dbh->do(
-                #    'UPDATE `mysql`.`columns_priv` SET `Host` = ? WHERE `User` = ?',
-                #    undef, $newHost, $rows->{$sqluID}->{'sqlu_name'}
-                #);
-
-                $dbh->commit();
-            };
-            if ( $@ ) {
-                $dbh->rollback();
-                die;
+            # Update hostname in SQL server privilege tables
+            #
+            # As of MariaDB 10.4, the mysql.user table is a view which is not
+            # updatable. We make use of the RENAME USER statement which is
+            # supported by all SQL server vendors/versions and which also
+            # moves the account privileges. A same SQL user can be assigned to
+            # many databases, hence the %renamed hash.
+            #
+            # Note that the RENAME USER statement causes an implicit commit,
+            # hence, we execute it outside of any transaction.
+            unless ( $renamed{$user}++ ) {
+                if ( $dbh->selectrow_hashref(
+                    'SELECT 1 FROM `mysql`.`user` WHERE `User` = ? AND `Host` = ?',
+                    undef, $user, $oldHost
+                ) && !$dbh->selectrow_hashref(
+                    'SELECT 1 FROM `mysql`.`user` WHERE `User` = ? AND `Host` = ?',
+                    undef, $user, $newHost
+                ) ) {
+                    $dbh->do(
+                        'RENAME USER ?@? TO ?@?',
+                        undef, $user, $oldHost, $user, $newHost
+                    );
+                }
             }
+
+            # Update hostname in i-MSCP sql_user database table
+            $dbh->do(
+                'UPDATE `sql_user` SET `sqlu_host` = ? WHERE `sqlu_id` = ?',
+                undef, $newHost, $sqluID
+            );
         }
 
         # Flush privileges to make changes effective

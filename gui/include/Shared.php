@@ -667,12 +667,15 @@ function sql_delete_user($dmnId, $userId)
     $row = $stmt->fetchRow(PDO::FETCH_ASSOC);
 
     if ($row['cnt'] < 2) {
-        exec_query(
-            'DELETE FROM mysql.user WHERE User = ? AND Host = ?', [$user, $host]
+        // As of MariaDB 10.4, the mysql.user table is a view which is not
+        // updatable. The DROP USER statement also removes the account
+        // privileges from all grant tables.
+        $stmt = exec_query(
+            'SELECT 1 FROM mysql.user WHERE User = ? AND Host = ?', [$user, $host]
         );
-        exec_query(
-            'DELETE FROM mysql.db WHERE Host = ? AND User = ?', [$host, $user]
-        );
+        if ($stmt->rowCount()) {
+            exec_query('DROP USER ?@?', [$user, $host]);
+        }
     } else {
         $dbName = preg_replace('/([%_])/', '\\\\$1', $dbName);
         exec_query(

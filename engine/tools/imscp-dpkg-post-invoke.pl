@@ -79,6 +79,18 @@ iMSCP::Bootstrapper->getInstance()->boot( {
     norequirements  => TRUE
 } );
 
+# Do nothing if the i-MSCP setup has not been completed yet (e.g. after an
+# interrupted or failed installation). The server implementations are not
+# known yet, and failing here would break any subsequent APT run.
+for my $param ( qw/
+    FRONTEND_PACKAGE HTTPD_PACKAGE SQL_PACKAGE FTPD_PACKAGE MTA_PACKAGE
+    NAMED_PACKAGE PO_PACKAGE PHP_PACKAGE
+/ ) {
+    next if length( $::imscpConfig{$param} // '' );
+    debug( "i-MSCP setup not completed ($param not set). Skipping dpkg(1) post-invoke tasks.", FALSE );
+    exit 0;
+}
+
 eval {
     my $server = $_;
 

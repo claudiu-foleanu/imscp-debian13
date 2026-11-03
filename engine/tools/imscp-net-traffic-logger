@@ -87,7 +87,7 @@ sub start
             $panelHttpsPort,
             80, 443, 110, 143, 25, 465, 587, 995, 993, 20, 21
         ) {
-            defined or next;
+            defined $port or next;
 
             # Adding rule for logging incoming traffic to the given port
             my $rs = execute(

@@ -405,7 +405,9 @@ use warnings;
 
     # PHP version for customers
     #
-    # Possible values: php5.6, php7.0, php7.1, php7.2, or php7.3 (recommended)
+    # Possible values: php5.6, php7.0, php7.1, php7.2, php7.3 (recommended), php7.4,
+    #                  php8.0, php8.1, php8.2, php8.3 or php8.4, depending on the
+    #                  versions available for your distribution
     #
     # Leave this parameter blank for us of default value: Default PHP version
     # as set in distribution packages file.

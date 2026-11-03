@@ -394,6 +394,23 @@ sub _makeDirs
     # Cleanup pools directory (prevent possible orphaned pool file when
     # changing PHP configuration level)
     unlink grep !/www\.conf$/, glob "$self->{'phpConfig'}->{'PHP_FPM_POOL_DIR_PATH'}/*.conf";
+
+    # Cleanup i-MSCP pool files from other PHP versions (prevent orphaned pool
+    # files when switching to another PHP version). Only pool files that
+    # belong to i-MSCP customers are removed (pool user matching the i-MSCP
+    # system user prefix).
+    my $userPrefix = $::imscpConfig{'SYSTEM_USER_PREFIX'};
+    for my $poolFile ( glob '/etc/php/*/fpm/pool.d/*.conf' ) {
+        next if $poolFile =~ /\/www\.conf$/
+            || index( $poolFile, "$self->{'phpConfig'}->{'PHP_FPM_POOL_DIR_PATH'}/" ) == 0
+            || !length $userPrefix;
+
+        open( my $fh, '<', $poolFile ) or next;
+        my $isImscpPool = grep { /^user\s*=\s*\Q$userPrefix\E\d+\s*$/ } <$fh>;
+        close( $fh );
+        unlink $poolFile if $isImscpPool;
+    }
+
     $self->{'events'}->trigger( 'afterHttpdMakeDirs' );
 }
 
@@ -447,6 +464,7 @@ sub _buildFastCgiConfFiles
         'actions', 'fastcgi', 'fcgid', 'fcgid_imscp', 'suexec',
         'php5', 'php5_cgi', 'php5filter',
         'php5.6', 'php7.0', 'php7.1', 'php7.2', 'php7.3', 'php7.4', 'php8.0',
+        'php8.1', 'php8.2', 'php8.3', 'php8.4',
         'proxy_fcgi', 'proxy_handler', 'mpm_itk', 'mpm_event', 'mpm_prefork',
         'mpm_worker'
     );
@@ -590,6 +608,10 @@ sub _buildApacheConfFiles
         'php7.3-cgi.conf', 'php7.3-fpm.conf',
         'php7.4-cgi.conf', 'php7.4-fpm.conf',
         'php8.0-cgi.conf', 'php8.0-fpm.conf',
+        'php8.1-cgi.conf', 'php8.1-fpm.conf',
+        'php8.2-cgi.conf', 'php8.2-fpm.conf',
+        'php8.3-cgi.conf', 'php8.3-fpm.conf',
+        'php8.4-cgi.conf', 'php8.4-fpm.conf',
         'serve-cgi-bin.conf'
     );
     $rs ||= $self->{'httpd'}->disableSites(

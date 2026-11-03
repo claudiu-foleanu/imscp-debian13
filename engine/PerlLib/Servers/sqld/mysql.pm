@@ -239,7 +239,7 @@ sub dropUser
     defined $host or die( '$host parameter not defined' );
 
     # Prevent deletion of system SQL users
-    return 0 if grep ( $_ eq $user, qw/ debian-sys-maint mysql.sys root / );
+    return 0 if grep ( $_ eq $user, qw/ debian-sys-maint mariadb.sys mysql.sys mysql.session mysql.infoschema root / );
 
     local $@;
     eval {

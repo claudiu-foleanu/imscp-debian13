@@ -25,6 +25,7 @@ package Package::WebFtpClients;
 
 use strict;
 use warnings;
+use iMSCP::Debug 'debug';
 use parent 'Package::AbstractPackageCollection';
 
 =head1 DESCRIPTION
@@ -71,7 +72,7 @@ sub getDefaultValues
 {
     my ( $self ) = @_;
 
-    'MonstaFTP';
+    'No';
 }
 
 =item getPackageHumanName( )
@@ -85,6 +86,99 @@ sub getPackageHumanName
     my ( $self ) = @_;
 
     'Web-based FTP clients';
+}
+
+=item getDeprecatedPackages( )
+
+ Get list of deprecated packages
+
+ Deprecated packages are no longer offered, even if their Perl module is still
+ provided. The i-MSCP MonstaFTP package is no longer available.
+
+ Return list of package names
+
+=cut
+
+sub getDeprecatedPackages
+{
+    my ( $self ) = @_;
+
+    qw/ MonstaFTP /;
+}
+
+=item registerSetupListeners( \%events )
+
+ See Package::AbstractPackageCollection::registerSetupListeners()
+
+ Deprecated packages are silently dropped from the list of selected packages
+ (upgrade from a previous version in which they were selected).
+
+=cut
+
+sub registerSetupListeners
+{
+    my ( $self, $events ) = @_;
+
+    my %deprecated = map { $_ => 1 } $self->getDeprecatedPackages();
+    my @selected = split ',', ::setupGetQuestion( $self->getConfVarname());
+    my @kept = grep { !$deprecated{$_} } @selected;
+
+    if ( @kept != @selected ) {
+        debug( sprintf(
+            'Dropping deprecated %s package(s): %s',
+            $self->getPackageHumanName(),
+            join( ', ', grep { $deprecated{$_} } @selected )
+        ));
+        ::setupSetQuestion(
+            $self->getConfVarname(),
+            @kept ? join( ',', @kept ) : $self->getDefaultValues()
+        );
+    }
+
+    $self->SUPER::registerSetupListeners( $events );
+}
+
+=item _dialogForPackages( \%dialog )
+
+ See Package::AbstractPackageCollection::_dialogForPackages()
+
+ Skip the dialog when there is no package available.
+
+=cut
+
+sub _dialogForPackages
+{
+    my ( $self, $dialog ) = @_;
+
+    unless ( @{ $self->{'PACKAGES'} } ) {
+        ::setupSetQuestion( $self->getConfVarname(), 'No' );
+        return 20;
+    }
+
+    $self->SUPER::_dialogForPackages( $dialog );
+}
+
+=back
+
+=head1 PRIVATE METHODS
+
+=over 4
+
+=item _init( )
+
+ See Package::AbstractPackageCollection::_init()
+
+=cut
+
+sub _init
+{
+    my ( $self ) = @_;
+
+    $self->SUPER::_init();
+
+    my %deprecated = map { $_ => 1 } $self->getDeprecatedPackages();
+    @{ $self->{'PACKAGES'} } = grep { !$deprecated{$_} } @{ $self->{'PACKAGES'} };
+    $self;
 }
 
 =back

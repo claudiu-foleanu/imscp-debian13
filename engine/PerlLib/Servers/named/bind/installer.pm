@@ -91,7 +91,7 @@ sub preinstall
         $self->{'config'}->{$configVar} = ::setupGetQuestion( $configVar );
     }
 
-    0;
+    $self->_setupDistributionSpecifics();
 }
 
 =item install( )
@@ -468,6 +468,72 @@ EOF
     0;
 }
 
+=item _setupDistributionSpecifics( )
+
+ Adjust configuration according the installed Bind9 version/packaging
+
+ Newer Debian/Ubuntu Bind9 packages (Bind >= 9.12, Debian >= Bullseye):
+  - provide the 'named' systemd unit ('bind9' being only an alias that only
+    exists when the unit is enabled) and the 'named-resolvconf' unit
+  - use the /etc/default/named default configuration file
+  - provide the named-compilezone program through the bind9-utils package in
+    /usr/bin
+
+ Return int 0 on success, other on failure
+
+=cut
+
+sub _setupDistributionSpecifics
+{
+    my ( $self ) = @_;
+
+    my ( $hasNamedUnit ) = grep { -f "$_/named.service" } (
+        '/lib/systemd/system', '/usr/lib/systemd/system'
+    );
+
+    if ( $hasNamedUnit || ( -x '/etc/init.d/named' && !-x '/etc/init.d/bind9' ) ) {
+        $self->{'config'}->{'NAMED_SERVICE'} = 'named';
+    } elsif ( !length $self->{'config'}->{'NAMED_SERVICE'} ) {
+        $self->{'config'}->{'NAMED_SERVICE'} = 'bind9';
+    }
+
+    if ( !-f $self->{'config'}->{'BIND_CONF_DEFAULT_FILE'} && -f '/etc/default/named' ) {
+        $self->{'config'}->{'BIND_CONF_DEFAULT_FILE'} = '/etc/default/named';
+    }
+
+    unless ( -x $self->{'config'}->{'NAMED_COMPILEZONE'} ) {
+        my $path = iMSCP::ProgramFinder::find( 'named-compilezone' );
+        $self->{'config'}->{'NAMED_COMPILEZONE'} = $path if defined $path;
+    }
+
+    if ( $hasNamedUnit ) {
+        # Remove i-MSCP bind9 units installed by older i-MSCP versions, before
+        # the upgrade to a distribution that provides its own named units. Those
+        # would conflict with the distribution 'named' units. We only remove
+        # regular files (not the aliases created by systemd).
+        my $reload = FALSE;
+        for my $unit ( qw/ bind9.service bind9-resolvconf.service / ) {
+            next if -l "/etc/systemd/system/$unit" || !-f _;
+            my $rs = iMSCP::File->new(
+                filename => "/etc/systemd/system/$unit"
+            )->delFile();
+            return $rs if $rs;
+            $reload = TRUE;
+        }
+
+        if ( $reload ) {
+            my $rs = execute(
+                [ 'systemctl', 'daemon-reload' ], \my $stdout, \my $stderr
+            );
+            debug( $stdout ) if length $stdout;
+            error( $stderr || 'Unknown error' ) if $rs;
+            return $rs if $rs;
+        }
+    }
+
+    0;
+}
+
 =item _bkpConfFile( $cfgFile )
 
  Backup configuration file
@@ -606,11 +672,16 @@ sub _buildConf
         # Fix for #IP-1333
         my $service = iMSCP::Service->getInstance();
         if ( $service->isSystemd() ) {
+            # Debian >= Bullseye: named-resolvconf unit ('bind9-resolvconf'
+            # being only an alias that exists only when the unit is enabled)
+            my $unit = $self->{'config'}->{'NAMED_SERVICE'} eq 'named'
+                ? 'named-resolvconf' : 'bind9-resolvconf';
+
             if ( $self->{'config'}->{'LOCAL_DNS_RESOLVER'} eq 'yes' ) {
-                $service->enable( 'bind9-resolvconf' );
-            } else {
-                $service->stop( 'bind9-resolvconf' );
-                $service->disable( 'bind9-resolvconf' );
+                $service->enable( $unit );
+            } elsif ( $service->hasService( $unit ) ) {
+                $service->stop( $unit );
+                $service->disable( $unit );
             }
         }
 
@@ -670,6 +741,12 @@ sub _buildConf
             $tplContent =~ s%//\s+(check-spf\s+ignore;)%$1%;
         }
 
+        # The dnssec-enable option is obsolete since Bind 9.16 and has been
+        # removed in Bind 9.18 (fatal error)
+        if ( version->parse( $namedVersion ) >= version->parse( '9.16.0' ) ) {
+            $tplContent =~ s%^[\t ]*dnssec-enable\s+[^;]+;[^\n]*\n%%m;
+        }
+
         $rs = $self->{'events'}->trigger( 'afterNamedBuildConf', \$tplContent, $tplName );
         return $rs if $rs;
 
@@ -703,8 +780,18 @@ sub _buildConf
             return 1 unless defined $tplContent;
         }
 
-        unless ( -f "$self->{'config'}->{'BIND_CONF_DIR'}/bind.keys" ) {
-            $tplContent =~ s%include\s+\Q"$self->{'config'}->{'BIND_CONF_DIR'}\E/bind.keys";\n%%;
+        # Remove inclusion of files that are not provided by the distribution
+        # package. For instance, Bind9 >= 9.20.5 (Debian >= Trixie) doesn't
+        # provide the bind.keys and named.conf.default-zones files anymore but
+        # provides the named.conf.root-hints file.
+        my $confDir = $self->{'config'}->{'BIND_CONF_DIR'};
+        my $hasRootHints = -f "$confDir/named.conf.root-hints";
+        for my $incFile ( qw/ bind.keys named.conf.default-zones named.conf.root-hints / ) {
+            next if -f "$confDir/$incFile"
+                # named.conf.default-zones (obsolete conffile) also provides
+                # the root hints zone, and refers to removed db.* files
+                && !( $incFile eq 'named.conf.default-zones' && $hasRootHints );
+            $tplContent =~ s%include\s+\Q"$confDir/$incFile"\E;\n%%;
         }
 
         $rs = $self->{'events'}->trigger(

@@ -455,6 +455,15 @@ EOF
     }
 
     if ( ::setupGetQuestion( 'SERVICES_SSL_ENABLED' ) eq 'yes' ) {
+        # VsFTPd >= 3.0.4 provides the ssl_tlsv11, ssl_tlsv12 and ssl_tlsv13
+        # options. Older Debian/Ubuntu VsFTPd versions were patched to provide
+        # the ssl_tlsv1_1 and ssl_tlsv1_2 options. Unknown options are fatal.
+        my $tlsOptions = version->parse(
+            $self->{'config'}->{'VSFTPD_VERSION'}
+        ) >= version->parse( '3.0.4' )
+            ? "ssl_tlsv11=NO\nssl_tlsv12=YES\nssl_tlsv13=YES"
+            : "ssl_tlsv1_1=NO\nssl_tlsv1_2=YES";
+
         $cfgTpl .= <<"EOF";
 
 # SSL support
@@ -464,8 +473,7 @@ force_local_logins_ssl=NO
 ssl_sslv2=NO
 ssl_sslv3=NO
 ssl_tlsv1=NO
-ssl_tlsv1_1=NO
-ssl_TLSv1_2=YES
+$tlsOptions
 require_ssl_reuse=NO
 ssl_ciphers=HIGH
 rsa_cert_file=$::imscpConfig{'CONF_DIR'}/imscp_services.pem

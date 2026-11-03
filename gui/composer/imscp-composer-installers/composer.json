@@ -1,0 +1,41 @@
+{
+  "name": "imscp/composer-installers",
+  "type": "composer-plugin",
+  "version": "1.1.0",
+  "license": "LGPL-2.1-only",
+  "description": "i-MSCP composer installers (bundled, Composer 1.x and 2.x compatible)",
+  "keywords": [
+    "installers",
+    "iMSCP",
+    "tools",
+    "plugins",
+    "library",
+    "roundcube"
+  ],
+  "homepage": "https://www.i-mscp.net/",
+  "authors": [
+    {
+      "name": "Laurent Declercq",
+      "email": "l.declercq@nuxwin.com",
+      "homepage": "https://www.i-mscp.net"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "iMSCP\\Composer\\": "src/"
+    }
+  },
+  "extra": {
+    "class": "iMSCP\\Composer\\Plugin"
+  },
+  "replace": {
+    "roundcube/plugin-installer": "*"
+  },
+  "conflict": {
+    "composer/installers": "*"
+  },
+  "require": {
+    "php": "^7.1 || ^8.0",
+    "composer-plugin-api": "^1.1 || ^2.0"
+  }
+}

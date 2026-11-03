@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "42dca106f2a210f5e9708b9448fc2079",
+    "content-hash": "a4fad3307793d96b0e9c37faeb361483",
     "packages": [
         {
             "name": "algo26-matthias/idna-convert",
@@ -87,24 +87,24 @@
         },
         {
             "name": "cweagans/composer-patches",
-            "version": "1.6.7",
+            "version": "1.7.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/cweagans/composer-patches.git",
-                "reference": "2e6f72a2ad8d59cd7e2b729f218bf42adb14f590"
+                "reference": "e190d4466fe2b103a55467dfa83fc2fecfcaf2db"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/cweagans/composer-patches/zipball/2e6f72a2ad8d59cd7e2b729f218bf42adb14f590",
-                "reference": "2e6f72a2ad8d59cd7e2b729f218bf42adb14f590",
+                "url": "https://api.github.com/repos/cweagans/composer-patches/zipball/e190d4466fe2b103a55467dfa83fc2fecfcaf2db",
+                "reference": "e190d4466fe2b103a55467dfa83fc2fecfcaf2db",
                 "shasum": ""
             },
             "require": {
-                "composer-plugin-api": "^1.0",
+                "composer-plugin-api": "^1.0 || ^2.0",
                 "php": ">=5.3.0"
             },
             "require-dev": {
-                "composer/composer": "~1.0",
+                "composer/composer": "~1.0 || ~2.0",
                 "phpunit/phpunit": "~4.6"
             },
             "type": "composer-plugin",
@@ -127,25 +127,23 @@
                 }
             ],
             "description": "Provides a way to patch Composer packages.",
-            "time": "2019-08-29T20:11:49+00:00"
+            "support": {
+                "issues": "https://github.com/cweagans/composer-patches/issues",
+                "source": "https://github.com/cweagans/composer-patches/tree/1.7.3"
+            },
+            "time": "2022-12-20T22:53:13+00:00"
         },
         {
             "name": "imscp/composer-installers",
-            "version": "1.0.0",
-            "source": {
-                "type": "git",
-                "url": "https://github.com/i-MSCP/composer-installers.git",
-                "reference": "d7874ad960e2e433d324895276512782d1cb670a"
-            },
+            "version": "1.1.0",
             "dist": {
-                "type": "zip",
-                "url": "https://api.github.com/repos/i-MSCP/composer-installers/zipball/d7874ad960e2e433d324895276512782d1cb670a",
-                "reference": "d7874ad960e2e433d324895276512782d1cb670a",
-                "shasum": ""
+                "type": "path",
+                "url": "composer/imscp-composer-installers",
+                "reference": "5e2831d6119f4522a44a5eea4e433323b88ded10"
             },
             "require": {
-                "composer-plugin-api": "^1.1",
-                "php": "^7.1"
+                "composer-plugin-api": "^1.1 || ^2.0",
+                "php": "^7.1 || ^8.0"
             },
             "conflict": {
                 "composer/installers": "*"
@@ -153,25 +151,15 @@
             "replace": {
                 "roundcube/plugin-installer": "*"
             },
-            "require-dev": {
-                "composer/composer": "^1.8",
-                "imscp/imscp-coding-standard": "^1.0",
-                "phpunit/phpunit": "^7.5.6",
-                "roave/security-advisories": "dev-master"
-            },
             "type": "composer-plugin",
             "extra": {
-                "class": "iMSCP\\Composer\\Plugin",
-                "branch-alias": {
-                    "dev-master": "1.0-dev"
-                }
+                "class": "iMSCP\\Composer\\Plugin"
             },
             "autoload": {
                 "psr-4": {
                     "iMSCP\\Composer\\": "src/"
                 }
             },
-            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "LGPL-2.1-only"
             ],
@@ -182,17 +170,20 @@
                     "homepage": "https://www.i-mscp.net"
                 }
             ],
-            "description": "i-MSCP composer installers",
+            "description": "i-MSCP composer installers (bundled, Composer 1.x and 2.x compatible)",
             "homepage": "https://www.i-mscp.net/",
             "keywords": [
-                "imscp",
+                "iMSCP",
                 "installers",
                 "library",
                 "plugins",
                 "roundcube",
                 "tools"
             ],
-            "time": "2019-03-14T09:40:29+00:00"
+            "transport-options": {
+                "symlink": false,
+                "relative": true
+            }
         },
         {
             "name": "league/flysystem",
@@ -829,5 +820,6 @@
         "ext-zip": "*",
         "ext-zlib": "*"
     },
-    "platform-dev": []
+    "platform-dev": [],
+    "plugin-api-version": "2.2.0"
 }

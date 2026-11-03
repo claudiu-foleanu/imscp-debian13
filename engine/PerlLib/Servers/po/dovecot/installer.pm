@@ -359,6 +359,49 @@ sub _setDovecotVersion
     0;
 }
 
+=item _isDovecot24OrNewer( )
+
+ Is the installed Dovecot version greater than or equal to 2.4.0?
+
+ Return bool TRUE if Dovecot version >= 2.4.0, FALSE otherwise, undef on failure
+
+=cut
+
+sub _isDovecot24OrNewer
+{
+    my ( $self ) = @_;
+
+    unless ( length $self->{'config'}->{'DOVECOT_VERSION'} ) {
+        return undef if $self->_setDovecotVersion();
+    }
+
+    version->declare( $self->{'config'}->{'DOVECOT_VERSION'} )->numify()
+        >= version->declare( '2.4.0' )->numify() ? TRUE : FALSE;
+}
+
+=item _getServiceCount( $name, $isDovecot24 )
+
+ Get value for the given service count parameter
+
+ With Dovecot >= 2.4, the 'service_count' setting has been renamed to
+ 'restart_request_count' and 0 (unlimited) is no longer a valid value.
+
+ Param string $name Parameter name
+ Param bool $isDovecot24 Whether or not Dovecot version is >= 2.4.0
+ Return string Parameter value
+
+=cut
+
+sub _getServiceCount
+{
+    my ( $self, $name, $isDovecot24 ) = @_;
+
+    my $value = $self->{'config'}->{$name};
+    return $value unless $isDovecot24;
+
+    defined $value && $value =~ /^\s*0+\s*$/ ? 'unlimited' : $value;
+}
+
 =item _bkpConfFile( $cfgFile )
 
  Backup the given file
@@ -519,6 +562,9 @@ sub _buildConf
 {
     my ( $self ) = @_;
 
+    my $isDovecot24 = $self->_isDovecot24OrNewer();
+    return 1 unless defined $isDovecot24;
+
     ( my $dbName = ::setupGetQuestion( 'DATABASE_NAME' ) ) =~ s%('|"|\\)%\\$1%g;
     ( my $dbUser = $self->{'_dovecot_sql_user'} ) =~ s%('|"|\\)%\\$1%g;
     ( my $dbPass = $self->{'_dovecot_sql_user_passwd'} ) =~ s%('|"|\\)%\\$1%g;
@@ -545,17 +591,17 @@ sub _buildConf
         DOVECOT_DEFAULT_CLIENT_LIMIT             => $self->{'config'}->{'DOVECOT_DEFAULT_CLIENT_LIMIT'},
         DOVECOT_IMAP_LOGIN_PROCESS_LIMIT         => $self->{'config'}->{'DOVECOT_IMAP_LOGIN_PROCESS_LIMIT'},
         DOVECOT_IMAP_LOGIN_PROCESS_MIN_AVAIL     => $self->{'config'}->{'DOVECOT_IMAP_LOGIN_PROCESS_MIN_AVAIL'},
-        DOVECOT_IMAP_LOGIN_PROCESS_SERVICE_COUNT => $self->{'config'}->{'DOVECOT_IMAP_LOGIN_PROCESS_SERVICE_COUNT'},
+        DOVECOT_IMAP_LOGIN_PROCESS_SERVICE_COUNT => $self->_getServiceCount( 'DOVECOT_IMAP_LOGIN_PROCESS_SERVICE_COUNT', $isDovecot24 ),
         DOVECOT_IMAP_PROCESS_LIMIT               => $self->{'config'}->{'DOVECOT_IMAP_PROCESS_LIMIT'},
         DOVECOT_IMAP_PROCESS_MIN_AVAIL           => $self->{'config'}->{'DOVECOT_IMAP_PROCESS_MIN_AVAIL'},
-        DOVECOT_IMAP_PROCESS_SERVICE_COUNT       => $self->{'config'}->{'DOVECOT_IMAP_PROCESS_SERVICE_COUNT'},
+        DOVECOT_IMAP_PROCESS_SERVICE_COUNT       => $self->_getServiceCount( 'DOVECOT_IMAP_PROCESS_SERVICE_COUNT', $isDovecot24 ),
         DOVECOT_IMAP_VSZ_LIMIT                   => $self->{'config'}->{'DOVECOT_IMAP_VSZ_LIMIT'},
         DOVECOT_POP3_LOGIN_PROCESS_LIMIT         => $self->{'config'}->{'DOVECOT_POP3_LOGIN_PROCESS_LIMIT'},
         DOVECOT_POP3_LOGIN_PROCESS_MIN_AVAIL     => $self->{'config'}->{'DOVECOT_POP3_LOGIN_PROCESS_MIN_AVAIL'},
-        DOVECOT_POP3_LOGIN_PROCESS_SERVICE_COUNT => $self->{'config'}->{'DOVECOT_POP3_LOGIN_PROCESS_SERVICE_COUNT'},
+        DOVECOT_POP3_LOGIN_PROCESS_SERVICE_COUNT => $self->_getServiceCount( 'DOVECOT_POP3_LOGIN_PROCESS_SERVICE_COUNT', $isDovecot24 ),
         DOVECOT_POP3_PROCESS_LIMIT               => $self->{'config'}->{'DOVECOT_POP3_PROCESS_LIMIT'},
         DOVECOT_POP3_PROCESS_MIN_AVAIL           => $self->{'config'}->{'DOVECOT_POP3_PROCESS_MIN_AVAIL'},
-        DOVECOT_POP3_PROCESS_SERVICE_COUNT       => $self->{'config'}->{'DOVECOT_POP3_PROCESS_SERVICE_COUNT'},
+        DOVECOT_POP3_PROCESS_SERVICE_COUNT       => $self->_getServiceCount( 'DOVECOT_POP3_PROCESS_SERVICE_COUNT', $isDovecot24 ),
         DOVECOT_MAX_USERIP_CONNECTIONS           => $self->{'config'}->{'DOVECOT_MAX_USERIP_CONNECTIONS'},
         ENGINE_ROOT_DIR                          => $::imscpConfig{'ENGINE_ROOT_DIR'},
         POSTFIX_USER                             => $self->{'mta'}->{'config'}->{'POSTFIX_USER'},
@@ -596,6 +642,16 @@ sub _buildConf
         ]
     );
 
+    # Dovecot >= 2.4 comes with a largely incompatible configuration syntax.
+    # Dedicated templates are used for that version. Note that event listeners
+    # still receive the generic template names (e.g. dovecot.conf).
+    my %cfgTpls24 = (
+        'dovecot.conf'             => 'dovecot-2.4.conf',
+        'dovecot-sql.conf'         => 'dovecot-sql-2.4.conf',
+        'dovecot-managesieve.conf' => 'dovecot-managesieve-2.4.conf',
+        'quota-warning'            => 'quota-warning-2.4'
+    );
+
     {
         # dovecot-sql.conf file must not be created/copied world-readable
         local $UMASK = 027;
@@ -609,7 +665,10 @@ sub _buildConf
             unless ( defined $cfgTpl ) {
                 return 1 unless defined(
                     $cfgTpl = iMSCP::File->new(
-                        filename => "$self->{'cfgDir'}/$conffile"
+                        filename => "$self->{'cfgDir'}/" . (
+                            $isDovecot24 && exists $cfgTpls24{$conffile}
+                                ? $cfgTpls24{$conffile} : $conffile
+                        )
                     )->get()
                 );
             }
@@ -618,8 +677,16 @@ sub _buildConf
                 my $ssl = ::setupGetQuestion( 'SERVICES_SSL_ENABLED' );
                 $cfgTpl .= "\nssl = $ssl\n";
 
-                # Fixme: Find a better way to guess libssl version
-                if ( $ssl eq 'yes' ) {
+                if ( $ssl eq 'yes' && $isDovecot24 ) {
+                    # Dovecot >= 2.4: ssl_cert/ssl_key settings were renamed
+                    # and the ssl_protocols setting was removed
+                    $cfgTpl .= <<"EOF";
+ssl_min_protocol = TLSv1.2
+ssl_server_cert_file = $::imscpConfig{'CONF_DIR'}/imscp_services.pem
+ssl_server_key_file = $::imscpConfig{'CONF_DIR'}/imscp_services.pem
+EOF
+                } elsif ( $ssl eq 'yes' ) {
+                    # Fixme: Find a better way to guess libssl version
                     unless ( `ldd /usr/lib/dovecot/libdovecot-login.so | grep libssl.so` =~ /libssl.so.(\d.\d)/ ) {
                         error( "Couldn't guess libssl version against which Dovecot has been built" );
                         return 1;

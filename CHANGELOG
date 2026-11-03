@@ -1,8 +1,48 @@
 i-MSCP ChangeLog
 
 --------------------------------------------------------------------------------
-Git 1.5.x
+1.5.4
 --------------------------------------------------------------------------------
+
+DEBIAN 13 (TRIXIE) SUPPORT
+    Added: Debian 13 (Trixie) packages file (autoinstaller)
+    Added: Customer PHP versions 8.1, 8.2, 8.3 and 8.4 (Sury repository)
+    Added: Dovecot 2.4 configuration templates (selected for Dovecot >= 2.4)
+    Added: MariaDB 11.8 support (unversioned Debian packages)
+    Added: Support for deb822 style APT sources (/etc/apt/sources.list.d/*.sources)
+    Fixed: apt-key(8) is no longer available; repository keys are now stored
+           in /etc/apt/keyrings and referenced via the signed-by option, and
+           third-party repositories are written in sources.list.d/imscp.list
+    Fixed: Bind 9.16+: Removed 'dnssec-enable' option; named.service unit,
+           /etc/default/named, named-compilezone path (Bind9 server impl.)
+    Fixed: Direct mysql.user updates/deletes fail with MariaDB >= 10.4
+           (mysql.user is a view); use DROP USER/RENAME USER instead
+    Fixed: iMSCP::Database::MariaDB adapter session variables were ignored
+    Fixed: Nginx >= 1.25: 'ssl on' directive removed (FrontEnd)
+    Fixed: Postfix compatibility_level and smtpd_relay_restrictions are now
+           always set (Postfix server impl.)
+    Fixed: ProFTPD 1.3.8: proftpd-core package, mod_tls (proftpd-mod-crypto),
+           IdentLookups, TLS protocols, /run/proftpd tmpfiles entry
+    Fixed: VsFTPD 3.0.4+: TLS protocol option names
+    Fixed: Release codename lookup for Debian 11 to 14
+    Fixed: Crypt::CBC >= 3.0 no longer accepts the -blocksize argument
+           (iMSCP::Crypt); ciphertext unchanged (verified against OpenSSL)
+    Fixed: Composer 1.x is no longer supported by packagist.org; switched to
+           Composer 2.2 (LTS), bundled Composer 2 compatible
+           imscp/composer-installers 1.1.0, cweagans/composer-patches 1.7.3
+    Fixed: Dovecot 2.4 lists the ~/.dovecot.sieve symlink as a mailbox
+           (maildir_stat_dirs)
+    Fixed: dpkg(1) post-invoke hook breaks APT when the i-MSCP setup has not
+           been completed (interrupted or failed installation)
+    Fixed: Public IP dialog shown in non-interactive mode even though the base
+           server IP is a public IP (preseeding)
+    Fixed: Virtual phpX.Y-phar packages in packages file (apt-mark warnings)
+    Fixed: Orphaned customer PHP-FPM pool files left in the previous PHP
+           version pool directory when switching PHP version (Apache2 PHP-FPM)
+    Fixed: Server traffic accounting: HTTP(S), POP3/IMAP, FTP and control panel
+           ports were never accounted ('defined or next' tested $_ instead of
+           the port) (imscp-net-traffic-logger)
+    Fixed: imscp-srv-traff always exited with status 1 on success
 
 BACKEND
     Added: Apache2 wildcard alias feature

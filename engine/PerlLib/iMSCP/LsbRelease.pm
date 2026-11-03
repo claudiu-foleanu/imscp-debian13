@@ -52,17 +52,22 @@ my %RELEASE_CODENAME_LOOKUP = !$IS_DEVUAN ? (
     '9'   => 'stretch',
     '10'  => 'buster',
     '11'  => 'bullseye',
-    '12'  => 'bookworm'
+    '12'  => 'bookworm',
+    '13'  => 'trixie',
+    '14'  => 'forky'
 ) : (
     '1' => 'jessie',
     '2' => 'ascii',
     '3' => 'beowulf',
+    '4' => 'chimaera',
+    '5' => 'daedalus',
+    '6' => 'excalibur',
 );
 
 my $TESTING_CODENAME = 'unknown.new.testing';
 
 my @RELEASES_ORDER = (
-    ( map { $RELEASE_CODENAME_LOOKUP{$_} } sort keys %RELEASE_CODENAME_LOOKUP ),
+    ( map { $RELEASE_CODENAME_LOOKUP{$_} } sort { $a <=> $b } keys %RELEASE_CODENAME_LOOKUP ),
     'stable', 'testing', 'unstable', ( $IS_DEVUAN ? 'ceres' : 'sid' )
 );
 

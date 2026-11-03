@@ -106,7 +106,13 @@ sub run
     }
 
     # Reset both input and output i-MSCP chains
-    iMSCP::Service->getInstance->restart( 'imscp_traffic' );
+    eval { iMSCP::Service->getInstance->restart( 'imscp_traffic' ); };
+    if ( $@ ) {
+        error( $@ );
+        return 1;
+    }
+
+    0;
 }
 
 sub _parseTrafficData

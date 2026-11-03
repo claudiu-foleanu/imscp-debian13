@@ -209,6 +209,13 @@ sub dialogForBaseServerPublicIP
         }
     }
 
+    # If no WAN IP has been set and the base server IP is already a public IP,
+    # we default to the base server IP. Without this, the dialog would be
+    # shown, which is fatal in non-interactive mode (preseeding).
+    $value = $baseServerIp if !length $value
+        && $baseServerIp ne '0.0.0.0'
+        && isValidIpAddr( $baseServerIp, qr/(?:PUBLIC|GLOBAL-UNICAST)/ );
+
     # If user didn't asked for reconfiguration and the server public IP is
     # equal to the base server IP, but not equal to the INADDR_ANY IP, we
     # skip the dialog for the server public IP
@@ -216,6 +223,7 @@ sub dialogForBaseServerPublicIP
         && !grep ( $_ eq iMSCP::Getopt->reconfigure, qw/ local_server primary_ip all / )
         && ( $value eq $baseServerIp && $baseServerIp ne '0.0.0.0' )
     ) {
+        ::setupSetQuestion( 'BASE_SERVER_PUBLIC_IP', $value );
         return 20;
     }
 

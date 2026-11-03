@@ -6,5 +6,10 @@
     <folders>${SYSTEM_CONF}/proftpd/working</folders>
     <copy_config>${SYSTEM_CONF}/proftpd/proftpd.conf</copy_config>
     <copy_config>${SYSTEM_CONF}/proftpd/proftpd.data.dist</copy_config>
-    <copy_config if="'${FTPD_PACKAGE}' eq 'Servers::ftpd::proftpd'">${ROOT_CONF}/logrotate.d/proftpd-basic</copy_config>
+    <folders>${ROOT_CONF}/tmpfiles.d</folders>
+    <!-- Debian/Ubuntu ProFTPD packaging older than proftpd-core (proftpd-basic) -->
+    <copy_config if="'${FTPD_PACKAGE}' eq 'Servers::ftpd::proftpd' &amp;&amp; !-d '/usr/share/doc/proftpd-core'">${ROOT_CONF}/logrotate.d/proftpd-basic</copy_config>
+    <!-- Debian >= Bookworm; Override the logrotate configuration file provided by the proftpd-core package -->
+    <copy_config if="'${FTPD_PACKAGE}' eq 'Servers::ftpd::proftpd' &amp;&amp; -d '/usr/share/doc/proftpd-core'">${ROOT_CONF}/logrotate.d/proftpd-core</copy_config>
+    <copy_config if="'${FTPD_PACKAGE}' eq 'Servers::ftpd::proftpd'" mode="0644">${ROOT_CONF}/tmpfiles.d/imscp-proftpd.conf</copy_config>
 </install>

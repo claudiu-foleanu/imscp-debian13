@@ -497,6 +497,32 @@ sub _buildMainCfFile
     $rs = $file->save();
     return $rs if $rs;
 
+    # Version specific parameters (independent of TLS)
+    $rs = $self->{'events'}->register( 'afterMtaBuildConf', sub {
+        my %params;
+
+        if ( version->parse( $self->{'config'}->{'POSTFIX_VERSION'} ) >= version->parse( '2.10.0' ) ) {
+            $params{'smtpd_relay_restrictions'} = {
+                action => 'replace',
+                values => [ '' ],
+                empty  => 1
+            };
+        }
+
+        # Without explicit compatibility level, Postfix >= 3.0 assumes level
+        # 0 and logs warnings about backwards-compatible default settings
+        if ( version->parse( $self->{'config'}->{'POSTFIX_VERSION'} ) >= version->parse( '3.0.0' ) ) {
+            $params{'compatibility_level'} = {
+                action => 'replace',
+                values => [ '2' ]
+            };
+        }
+
+        return 0 unless %params;
+        $self->{'mta'}->postconf( %params );
+    } );
+    return $rs if $rs;
+
     # Add TLS parameters if required
     return 0 unless ::setupGetQuestion( 'SERVICES_SSL_ENABLED' ) eq 'yes';
 
@@ -576,21 +602,6 @@ sub _buildMainCfFile
                 action => 'replace',
                 values => [ 'btree:/var/lib/postfix/smtp_scache' ]
             } );
-
-        if ( version->parse( $self->{'config'}->{'POSTFIX_VERSION'} ) >= version->parse( '2.10.0' ) ) {
-            $params{'smtpd_relay_restrictions'} = {
-                action => 'replace',
-                values => [ '' ],
-                empty  => 1
-            };
-        }
-
-        if ( version->parse( $self->{'config'}->{'POSTFIX_VERSION'} ) >= version->parse( '3.0.0' ) ) {
-            $params{'compatibility_level'} = {
-                action => 'replace',
-                values => [ '2' ]
-            };
-        }
 
         $self->{'mta'}->postconf( %params );
     }

@@ -27,6 +27,7 @@ use strict;
 use warnings;
 use Carp;
 use Crypt::CBC;
+use version;
 use Crypt::Eksblowfish::Bcrypt ();
 use Digest::SHA ();
 use Digest::MD5 ();
@@ -508,7 +509,7 @@ sub _encryptCBC( $$$$ )
             -cipher      => $algorithm,
             -key         => $key,
             -keysize     => length $key,
-            -blocksize   => length $iv,
+            _blocksizeArg( $iv ),
             -literal_key => 1,
             -iv          => $iv,
             -header      => 'none',
@@ -540,7 +541,7 @@ sub _decryptCBC( $$$$ )
         -cipher      => $algorithm,
         -key         => $key,
         -keysize     => length $key,
-        -blocksize   => length $iv,
+        _blocksizeArg( $iv ),
         -literal_key => 1,
         -iv          => $iv,
         -header      => 'none',
@@ -548,6 +549,27 @@ sub _decryptCBC( $$$$ )
     )->decrypt(
         decode_base64( $data )
     );
+}
+
+=item _blocksizeArg( $iv )
+
+ Return the -blocksize argument for Crypt::CBC versions older than 3.0
+
+ Crypt::CBC >= 3.0 (Debian >= Bullseye) no longer accept the -blocksize
+ argument. The block size is now always taken from the cipher, which is the
+ same as the IV length for the ciphers we use (Blowfish: 8, Rijndael: 16).
+
+ Param string $iv Initialization vector
+ Return list
+
+=cut
+
+sub _blocksizeArg
+{
+    my ( $iv ) = @_;
+
+    version->parse( $Crypt::CBC::VERSION ) < version->parse( '3.0' )
+        ? ( -blocksize => length $iv ) : ();
 }
 
 =item _toAlphabet64( $string )

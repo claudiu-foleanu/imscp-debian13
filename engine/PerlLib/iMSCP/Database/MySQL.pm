@@ -329,7 +329,11 @@ sub dumpdb
     my $stderr;
     execute(
         [
-            '/usr/bin/mysqldump',
+            # As of MariaDB 11.0, the mysql* program names are deprecated
+            # compatibility symlinks that print a warning on STDERR.
+            ( -x '/usr/bin/mariadb-dump'
+                ? '/usr/bin/mariadb-dump' : '/usr/bin/mysqldump'
+            ),
             '--opt',
             '--complete-insert',
             '--add-drop-database',

@@ -507,7 +507,8 @@ sub getTraffic
             # Log line examples
             # Apr 18 23:41:48 jessie dovecot: imap(user@domain.tld): Disconnected: Logged out in=244 out=858
             # Apr 18 23:41:48 jessie dovecot: pop3(user@domain.tld): Disconnected: Logged out top=0/0, retr=0/0, del=0/0, size=0, in=12, out=43
-            next unless /(?:imap|pop3)\([^\@]+\@(?<domain>[^\)]+)\):.*in=(?<in>\d+).*out=(?<out>\d+)$/o
+            # Nov 03 18:41:48 trixie dovecot: imap(user@domain.tld)<1234><SessionId>: Disconnected: Logged out in=244 out=858
+            next unless /(?:imap|pop3)\([^\@]+\@(?<domain>[^\)]+)\)(?:<[^>]*>)*:.*in=(?<in>\d+).*out=(?<out>\d+)$/o
                 && exists $trafficDb->{$+{'domain'}};
 
             $trafficDb->{$+{'domain'}} += ( $+{'in'}+$+{'out'} );

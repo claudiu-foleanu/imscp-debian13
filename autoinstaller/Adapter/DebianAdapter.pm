@@ -638,8 +638,11 @@ sub _setupGetAddrInfoPrecedence
 
  Add required sections to repositories that support them
 
+ Both the one-line style format (/etc/apt/sources.list) and the deb822 style
+ format (/etc/apt/sources.list.d/*.sources), which is the default since Debian
+ 13 (Trixie) and Ubuntu 24.04 (Noble), are supported.
+
  Note: Also enable source repositories for the sections when available.
- TODO: Implement better check by parsing apt-cache policy output
 
  Return int 0 on success, other on failure
 
@@ -649,8 +652,144 @@ sub _updateAptSourceList
 {
     my ( $self ) = @_;
 
+    my %found;
+
+    if ( -f '/etc/apt/sources.list' ) {
+        my $rs = $self->_updateAptSourceListOneLine( \%found );
+        return $rs if $rs;
+    }
+
+    for my $sourcesFile ( glob '/etc/apt/sources.list.d/*.sources' ) {
+        my $rs = $self->_updateAptSourceListDeb822( $sourcesFile, \%found );
+        return $rs if $rs;
+    }
+
+    for my $section ( @{ $self->{'repositorySections'} } ) {
+        next if $found{$section};
+        error( sprintf(
+            "Couldn't find any repository supporting %s section", $section
+        ));
+        return 1;
+    }
+
+    0;
+}
+
+=item _urlExists( $url )
+
+ Whether the given URL exists
+
+ Param string $url URL
+ Return bool TRUE if the given URL exists, FALSE otherwise
+
+=cut
+
+sub _urlExists
+{
+    my ( undef, $url ) = @_;
+
+    my $rs = execute(
+        [
+            '/usr/bin/wget', '--prefer-family=IPv4', '--timeout=30', '--spider',
+            $url =~ s{([^:])//}{$1/}gr
+        ],
+        \my $stdout,
+        \my $stderr
+    );
+    debug( $stdout ) if length $stdout;
+    debug( $stderr || 'Unknown error' ) if $rs && $rs != 8;
+    !$rs;
+}
+
+=item _updateAptSourceListDeb822( $sourcesFile, \%found )
+
+ Add required sections to repositories from the given deb822 sources file
+
+ Param string $sourcesFile deb822 style sources file path
+ Param hashref \%found Sections found
+ Return int 0 on success, other on failure
+
+=cut
+
+sub _updateAptSourceListDeb822
+{
+    my ( $self, $sourcesFile, $found ) = @_;
+
+    my $file = iMSCP::File->new( filename => $sourcesFile );
+    my $fileC = $file->get();
+    return 1 unless defined $fileC;
+
+    my $changed = FALSE;
+    my @stanzas = split /\n(?:[ \t]*\n)+/, $fileC;
+
+    for my $stanza ( @stanzas ) {
+        my %f;
+        while ( $stanza =~ /^([A-Za-z0-9-]+):[ \t]*(.*)$/mg ) {
+            $f{lc $1} = $2;
+        }
+
+        next unless length $f{'types'} && length $f{'uris'}
+            && length $f{'suites'} && length $f{'components'};
+        next if length $f{'enabled'} && $f{'enabled'} =~ /^no$/i;
+        next unless grep ( $_ eq 'deb', split /\s+/, $f{'types'} );
+
+        my ( $uri ) = split /\s+/, $f{'uris'};
+        my ( $suite ) = split /\s+/, $f{'suites'};
+        next unless $uri =~ m{^(?:https?|ftp)://};
+        next if $suite =~ m{/$}; # Flat repository
+
+        my @components = split /\s+/, $f{'components'};
+        my @types = split /\s+/, $f{'types'};
+        my $sourceSupported = FALSE;
+
+        for my $section ( @{ $self->{'repositorySections'} } ) {
+            unless ( grep ( $_ eq $section, @components ) ) {
+                next unless $self->_urlExists( "$uri/dists/$suite/$section/" );
+                push @components, $section;
+            }
+
+            $found->{$section} = TRUE;
+            $sourceSupported ||= $self->_urlExists(
+                "$uri/dists/$suite/$section/source/"
+            ) unless grep ( $_ eq 'deb-src', @types );
+        }
+
+        push @types, 'deb-src' if $sourceSupported;
+
+        my $components = join ' ', @components;
+        my $types = join ' ', @types;
+        next if $components eq $f{'components'} && $types eq $f{'types'};
+
+        $stanza =~ s/^(Components:)[ \t]*.*$/$1 $components/mi;
+        $stanza =~ s/^(Types:)[ \t]*.*$/$1 $types/mi;
+        $changed = TRUE;
+    }
+
+    return 0 unless $changed;
+
+    my $rs = $file->copyFile( "$sourcesFile.bkp", { preserve => 'no' } );
+    return $rs if $rs;
+
+    $file->set( join( "\n\n", @stanzas ) =~ s/\n*$/\n/r );
+    $file->save();
+}
+
+=item _updateAptSourceListOneLine( \%found )
+
+ Add required sections to repositories from the /etc/apt/sources.list file
+
+ Param hashref \%found Sections found
+ Return int 0 on success, other on failure
+
+=cut
+
+sub _updateAptSourceListOneLine
+{
+    my ( $self, $found ) = @_;
+
     my $file = iMSCP::File->new( filename => '/etc/apt/sources.list' );
     my $fileC = $file->get();
+    return 1 unless defined $fileC;
 
     for my $section ( @{ $self->{'repositorySections'} } ) {
         my @seenRepositories = ();
@@ -713,13 +852,7 @@ sub _updateAptSourceList
             }
         }
 
-        unless ( $foundSection ) {
-            error( sprintf(
-                "Couldn't find any repository supporting %s section",
-                $section
-            ));
-            return 1;
-        }
+        $found->{$section} = TRUE if $foundSection;
     }
 
     $file->set( $fileC );
@@ -730,6 +863,12 @@ sub _updateAptSourceList
 
  Process APT repositories
 
+ Third-party repositories are written in the
+ /etc/apt/sources.list.d/imscp.list file. Repository keys are stored in the
+ /etc/apt/keyrings directory and referenced through the 'signed-by' option, as
+ the apt-key(8) command is deprecated and no longer available since Debian 13
+ (Trixie) and Ubuntu 24.04 (Noble).
+
  Return int 0 on success, other on failure
 
 =cut
@@ -738,51 +877,82 @@ sub _processAptRepositories
 {
     my ( $self ) = @_;
 
-    return 0 unless @{ $self->{'_dist'}->{'aptRepositoriesToRemove'} }
-        || @{ $self->{'_dist'}->{'aptRepositoriesToAdd'} };
+    my $keyringDir = '/etc/apt/keyrings';
+    my $listFile = '/etc/apt/sources.list.d/imscp.list';
 
-    my $file = iMSCP::File->new( filename => '/etc/apt/sources.list' );
-    my $rs = $file->copyFile( '/etc/apt/sources.list.bkp' );
-    return $rs if $rs;
+    # Cleanup APT sources.list file (repositories that were added by older
+    # i-MSCP versions, and conflicting repositories)
+    if ( -f '/etc/apt/sources.list' ) {
+        my $file = iMSCP::File->new( filename => '/etc/apt/sources.list' );
+        return 1 unless defined( my $fileC = $file->get() );
+        my $fileCOrig = $fileC;
 
-    return 1 unless defined( my $fileC = $file->get() );
+        for my $repository (
+            @{ $self->{'_dist'}->{'aptRepositoriesToRemove'} },
+            @{ $self->{'_dist'}->{'aptRepositoriesToAdd'} }
+        ) {
+            my $repo = ref $repository eq 'HASH'
+                ? $repository->{'repository'} : $repository;
+            # Match on URI only as the repository can be written with options
+            my ( $uri ) = split /\s+/, $repo;
+            $fileC =~ s/^\n?(?:#\s*)?deb(?:-src)?\s+(?:\[[^\]]*\]\s+)?\Q$uri\E.*?\n//gm;
+        }
 
-    # Cleanup APT sources.list file
-    for my $repository (
-        @{ $self->{'_dist'}->{'aptRepositoriesToRemove'} },
-        @{ $self->{'_dist'}->{'aptRepositoriesToAdd'} }
-    ) {
-        my $escapedRepository = ref $repository eq 'HASH'
-            ? $repository->{'repository'} : $repository;
-        $fileC =~ s/^\n?(?:#\s*)?deb(?:-src)?\s+\Q$escapedRepository\E.*?\n//gm;
+        if ( $fileC ne $fileCOrig ) {
+            my $rs = $file->copyFile( '/etc/apt/sources.list.bkp' );
+            $file->set( $fileC );
+            $rs ||= $file->save();
+            return $rs if $rs;
+        }
     }
 
-    # Add APT repositories
-    for my $repository ( @{ $self->{'_dist'}->{'aptRepositoriesToAdd'} } ) {
-        next if $fileC =~ /^deb\s+$repository->{'repository'}/m;
+    # Remove conflicting repositories from other list files
+    for my $repository ( @{ $self->{'_dist'}->{'aptRepositoriesToRemove'} } ) {
+        my ( $uri ) = split /\s+/, $repository;
+        for my $listFilePath ( glob '/etc/apt/sources.list.d/*.list' ) {
+            next if $listFilePath eq $listFile;
+            my $file = iMSCP::File->new( filename => $listFilePath );
+            return 1 unless defined( my $fileC = $file->get() );
+            next unless $fileC =~ s/^\n?(?:#\s*)?deb(?:-src)?\s+(?:\[[^\]]*\]\s+)?\Q$uri\E.*?\n//gm;
+            $file->set( $fileC );
+            my $rs = $file->save();
+            return $rs if $rs;
+        }
+    }
 
-        $fileC .= <<"EOF";
+    unless ( @{ $self->{'_dist'}->{'aptRepositoriesToAdd'} } ) {
+        return -f $listFile ? iMSCP::File->new( filename => $listFile )->delFile() : 0;
+    }
 
-deb $repository->{'repository'}
-deb-src $repository->{'repository'}
+    my $rs = iMSCP::Dir->new( dirname => $keyringDir )->make( {
+        user => 'root', group => 'root', mode => 0755
+    } );
+    return $rs if $rs;
+
+    my $fileC = <<'EOF';
+# i-MSCP APT repositories - auto-generated by i-MSCP
+#     DO NOT EDIT THIS FILE BY HAND -- YOUR CHANGES WILL BE OVERWRITTEN
 EOF
 
-        # Hide "apt-key output should not be parsed (stdout is not a terminal)"
-        # warning that is raised in newest apt-key versions. Our usage of
-        # apt-key is not dangerous (not parsing)
-        local $ENV{'APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE'} = TRUE;
+    for my $repository ( @{ $self->{'_dist'}->{'aptRepositoriesToAdd'} } ) {
+        my ( $uri ) = split /\s+/, $repository->{'repository'};
+        ( my $keyName = $uri ) =~ s{^[a-z]+://}{};
+        $keyName =~ s{[^a-zA-Z0-9.]+}{-}g;
+        $keyName =~ s{-+$}{};
+        my $keyringFile = "$keyringDir/imscp-$keyName.gpg";
+        my $tmpKeyFile = File::Temp->new();
+        $tmpKeyFile->close();
 
         if ( $repository->{'repository_key_srv'}
             && $repository->{'repository_key_id'}
         ) {
-            # Add the repository key from the given key server
+            # Fetch the repository key from the given key server
+            my $gnupgHome = File::Temp->newdir();
             $rs = execute(
                 [
-                    '/usr/bin/apt-key',
-                    'adv',
-                    '--recv-keys',
+                    '/usr/bin/gpg', '--batch', '--homedir', $gnupgHome,
                     '--keyserver', $repository->{'repository_key_srv'},
-                    $repository->{'repository_key_id'}
+                    '--recv-keys', $repository->{'repository_key_id'}
                 ],
                 \my $stdout,
                 \my $stderr
@@ -791,23 +961,30 @@ EOF
             error( $stderr || 'Unknown error' ) if $rs;
             return $rs if $rs;
 
-            # Workaround https://bugs.launchpad.net/ubuntu/+source/gnupg2/+bug/1633754
+            $rs = execute(
+                [
+                    '/usr/bin/gpg', '--batch', '--homedir', $gnupgHome,
+                    '--yes', '--output', $tmpKeyFile->filename(),
+                    '--export', $repository->{'repository_key_id'}
+                ],
+                \$stdout,
+                \$stderr
+            );
+            debug( $stdout ) if length $stdout;
+            error( $stderr || 'Unknown error' ) if $rs;
+            return $rs if $rs;
+
             execute(
-                [ '/usr/bin/pkill', '-TERM', 'dirmngr' ],
+                [ '/usr/bin/gpgconf', '--homedir', $gnupgHome, '--kill', 'all' ],
                 \$stdout,
                 \$stderr
             );
         } elsif ( $repository->{'repository_key_uri'} ) {
-            # Add the repository key by fetching it first from the given URI
-            my $keyFile = File::Temp->new();
-            $keyFile->close();
+            # Fetch the repository key from the given URI
             $rs = execute(
                 [
-                    '/usr/bin/wget',
-                    '--prefer-family=IPv4',
-                    '--timeout=30',
-                    '-O',
-                    $keyFile->filename(),
+                    '/usr/bin/wget', '--prefer-family=IPv4', '--timeout=30',
+                    '-O', $tmpKeyFile->filename(),
                     $repository->{'repository_key_uri'}
                 ],
                 \my $stdout,
@@ -816,20 +993,56 @@ EOF
             debug( $stdout ) if length $stdout;
             error( $stderr || 'Unknown error' ) if $rs;
             return $rs if $rs;
+        } else {
+            # No key provided. The repository must be signed by an already
+            # trusted key.
+            $fileC .= <<"EOF";
 
-            $rs ||= execute(
-                [ '/usr/bin/apt-key', 'add', $keyFile ],
-                \$stdout,
-                \$stderr
+deb $repository->{'repository'}
+deb-src $repository->{'repository'}
+EOF
+            next;
+        }
+
+        # Convert key to binary format (dearmor) if needed
+        my $keyData = iMSCP::File->new(
+            filename => $tmpKeyFile->filename()
+        )->getAsRef();
+        return 1 unless defined $keyData;
+
+        if ( ${ $keyData } =~ /^-----BEGIN PGP PUBLIC KEY BLOCK-----/m ) {
+            $rs = execute(
+                [
+                    '/usr/bin/gpg', '--batch', '--yes', '--dearmor',
+                    '--output', $keyringFile, $tmpKeyFile->filename()
+                ],
+                \my $stdout,
+                \my $stderr
             );
             debug( $stdout ) if length $stdout;
             error( $stderr || 'Unknown error' ) if $rs;
             return $rs if $rs;
+        } else {
+            $rs = iMSCP::File->new(
+                filename => $tmpKeyFile->filename()
+            )->copyFile( $keyringFile, { preserve => 'no' } );
+            return $rs if $rs;
         }
+
+        $rs = iMSCP::File->new( filename => $keyringFile )->mode( 0644 );
+        return $rs if $rs;
+
+        $fileC .= <<"EOF";
+
+deb [signed-by=$keyringFile] $repository->{'repository'}
+deb-src [signed-by=$keyringFile] $repository->{'repository'}
+EOF
     }
 
+    my $file = iMSCP::File->new( filename => $listFile );
     $file->set( $fileC );
-    $file->save();
+    $rs = $file->save();
+    $rs ||= $file->mode( 0644 );
 }
 
 =item _processAptPreferences( )
@@ -1433,7 +1646,10 @@ EOF
     }
 
     # Pre-fill question for Proftpd FTP server if required
-    if ( $::questions{'FTPD_PACKAGE'} eq 'Servers::ftpd::proftpd' ) {
+    # (Not needed with proftpd-core >= 1.3.8 which has no debconf templates)
+    if ( $::questions{'FTPD_PACKAGE'} eq 'Servers::ftpd::proftpd'
+        && !grep ( $_ eq 'proftpd-core', @{ $self->{'_dist'}->{'packagesToInstall'} } )
+    ) {
         $fileC .= <<'EOF';
 proftpd-basic shared/proftpd/inetd_or_standalone select standalone
 EOF
@@ -1498,8 +1714,14 @@ EOF
                 $qNamePrefix = 'mysql-server';
             }
         } elsif ( $sqlServerVendor eq 'mariadb' ) {
-            $qOwner = 'mariadb-server-' . $sqlServerVersion;
-            $qNamePrefix = 'mysql-server';
+            if ( version->parse( $sqlServerVersion ) >= version->parse( '10.6' ) ) {
+                # Unversioned MariaDB packages (Debian >= 12, Ubuntu >= 22.04)
+                $qOwner = 'mariadb-server';
+                $qNamePrefix = 'mariadb-server';
+            } else {
+                $qOwner = 'mariadb-server-' . $sqlServerVersion;
+                $qNamePrefix = 'mysql-server';
+            }
         } else {
             $qOwner = 'percona-server-server-' . $sqlServerVersion;
             $qNamePrefix = 'percona-server-server';

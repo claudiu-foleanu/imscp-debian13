@@ -2,9 +2,22 @@
 
 ## Supported Debian versions
 
-- Debian Jessie (8.x),
 - Debian Stretch (9.x)
 - Debian Buster (10.x)
+- Debian Trixie (13.x)
+
+### Debian Trixie (13.x) notes
+
+- The control panel itself (imscp_panel service) still runs on PHP 7.3, which
+  is provided by the [Sury](https://packages.sury.org/php/) repository. Customer
+  sites can use any PHP version from 5.6 to 8.4.
+- MariaDB 11.8 (distribution package) is installed as SQL server.
+- Dovecot 2.4 is supported (new configuration syntax).
+- Third-party APT repositories are written in the
+  `/etc/apt/sources.list.d/imscp.list` file and their keys are stored in the
+  `/etc/apt/keyrings` directory as the `apt-key` command is no longer
+  available. Both `/etc/apt/sources.list` and the deb822
+  `/etc/apt/sources.list.d/*.sources` formats are supported.
 
 ## Installation
 
