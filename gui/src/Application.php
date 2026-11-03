@@ -271,12 +271,22 @@ class Application
      */
     protected function setErrorHandling()
     {
-        // Don't show notices and deprecation warnings if we are in
-        // production, unless we are in debug mode
+        // Don't show notices, warnings and deprecation warnings if we are in
+        // production, unless we are in debug mode.
+        //
+        // E_WARNING is excluded in production because PHP 8 reclassified
+        // several formerly benign E_NOTICE conditions (undefined array key,
+        // accessing an array offset on a non-array such as false/null) as
+        // E_WARNING. On PHP 7.x these were notices and, being filtered out,
+        // never reached the error handler; keeping them fatal on PHP 8 would
+        // turn long-standing, harmless legacy access patterns into fatal
+        // error pages. Genuine fatal errors (E_ERROR, TypeError, parse
+        // errors, ...) are unaffected and still surface. Suppressed warnings
+        // are still written to the frontend error log below.
         if ($this->getEnvironment() == 'production') {
             error_reporting(
-                E_ALL & ~E_NOTICE & ~E_USER_NOTICE & ~E_DEPRECATED
-                & ~E_USER_DEPRECATED
+                E_ALL & ~E_NOTICE & ~E_USER_NOTICE & ~E_WARNING
+                & ~E_USER_WARNING & ~E_DEPRECATED & ~E_USER_DEPRECATED
             );
             ini_set('display_errors', 0);
         } else {

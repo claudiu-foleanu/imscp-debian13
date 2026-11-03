@@ -549,7 +549,7 @@ class TemplateEngine
                             if (isset($this->namespace[$varName])) {
                                 $data = substr_replace(
                                     $data,
-                                    $this->namespace[$varName],
+                                    (string)$this->namespace[$varName],
                                     $curlB,
                                     $curlE - $curlB + 1
                                 );
@@ -559,7 +559,7 @@ class TemplateEngine
                             } elseif (isset($this->dtplData[$varName])) {
                                 $data = substr_replace(
                                     $data,
-                                    $this->dtplData[$varName],
+                                    (string)$this->dtplData[$varName],
                                     $curlB,
                                     $curlE - $curlB + 1
                                 );

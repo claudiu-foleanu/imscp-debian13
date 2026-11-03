@@ -24,7 +24,8 @@
  * PhpDocMissingThrowsInspection
  */
 
-use Algo26\IdnaConvert\IdnaConvert;
+use Algo26\IdnaConvert\ToIdn;
+use Algo26\IdnaConvert\ToUnicode;
 use iMSCP\Database\DatabaseMySQL;
 use iMSCP\Database\DatabaseResultSet;
 use iMSCP\Event\EventAggregator;
@@ -1479,16 +1480,29 @@ function array_encode_idna($array, $asPath = false)
  */
 function encode_idna($string)
 {
-    if (!Registry::isRegistered('IdnaConvert')) {
-        Registry::set('IdnaConvert', new IdnaConvert());
+    $string = (string)$string;
+    if ($string === '') {
+        return $string;
+    }
+
+    if (!Registry::isRegistered('IdnaToIdn')) {
+        Registry::set('IdnaToIdn', new ToIdn());
     }
 
     try {
-        /** @var IdnaConvert $idnaConvert */
-        $idnaConvert = Registry::get('IdnaConvert');
+        /** @var ToIdn $idnaConvert */
+        $idnaConvert = Registry::get('IdnaToIdn');
 
-        return $idnaConvert->encode($string);
-    } catch (\Exception $e) {
+        if (strpos($string, '@') !== false) {
+            return $idnaConvert->convertEmailAddress($string);
+        }
+
+        if (preg_match('#^[a-z][a-z0-9+.-]*://#i', $string)) {
+            return $idnaConvert->convertUrl($string);
+        }
+
+        return $idnaConvert->convert($string);
+    } catch (\Throwable $e) {
         return $string;
     }
 }
@@ -1501,16 +1515,29 @@ function encode_idna($string)
  */
 function decode_idna($string)
 {
-    if (!Registry::isRegistered('IdnaConvert')) {
-        Registry::set('IdnaConvert', new IdnaConvert());
+    $string = (string)$string;
+    if ($string === '') {
+        return $string;
+    }
+
+    if (!Registry::isRegistered('IdnaToUnicode')) {
+        Registry::set('IdnaToUnicode', new ToUnicode());
     }
 
     try {
-        /** @var IdnaConvert $idnaConvert */
-        $idnaConvert = Registry::get('IdnaConvert');
+        /** @var ToUnicode $idnaConvert */
+        $idnaConvert = Registry::get('IdnaToUnicode');
 
-        return $idnaConvert->decode($string);
-    } catch (\Exception $e) {
+        if (strpos($string, '@') !== false) {
+            return $idnaConvert->convertEmailAddress($string);
+        }
+
+        if (preg_match('#^[a-z][a-z0-9+.-]*://#i', $string)) {
+            return $idnaConvert->convertUrl($string);
+        }
+
+        return $idnaConvert->convert($string);
+    } catch (\Throwable $e) {
         return $string;
     }
 }

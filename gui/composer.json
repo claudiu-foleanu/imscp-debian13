@@ -69,8 +69,7 @@
     }
   ],
   "require": {
-    "php": ">=7.3 <7.4",
-    "ext-apc": "*",
+    "php": ">=8.2",
     "ext-apcu": "*",
     "ext-bz2": "*",
     "ext-ctype": "*",
@@ -94,7 +93,6 @@
     "ext-pdo_mysql": "*",
     "ext-phar": "*",
     "ext-posix": "*",
-    "ext-pspell": "*",
     "ext-reflection": "*",
     "ext-session": "*",
     "ext-simplexml": "*",
@@ -106,15 +104,15 @@
     "ext-xmlwriter": "*",
     "ext-zip": "*",
     "ext-zlib": "*",
-    "algo26-matthias/idna-convert": "~2.1.0",
+    "algo26-matthias/idna-convert": "^4.0",
     "cweagans/composer-patches": "~1.7.3",
     "imscp/composer-installers": "^1.1",
-    "league/flysystem": "^1.0",
-    "pear/net_dns2": "~1.4.4",
-    "phpseclib/phpseclib": "~2.0.20",
-    "slim/slim": "^3.12",
-    "zendframework/zend-escaper": "^2.6",
-    "zendframework/zendframework1": "1.12.20"
+    "league/flysystem": "^1.1",
+    "pear/net_dns2": "~1.5.3",
+    "phpseclib/phpseclib": "~2.0.47",
+    "slim/slim": "^3.12.6",
+    "laminas/laminas-escaper": "^2.13",
+    "pedropanos/zf1-future": "^1.25"
   },
   "autoload": {
     "psr-4": {
@@ -147,12 +145,8 @@
     },
     "composer-exit-on-patch-failure": true,
     "patches": {
-      "zendframework/zendframework1": {
-        "Patch for PHP deprecations (Zend Framework 1)": "patches/001_php_deprecations.patch",
-        "Patch for Zend_Form component (docblock fix)": "patches/002_zend_form_docblock_fix.patch",
-        "Patch for Zend_Navigation component (isActive() implementation for URI page)": "patches/003_zend_navigation_patch",
-        "Patch for Zend_Validate_File_Upload validator (count() fix)": "patches/004_zend_validate_file_upload.patch",
-        "Patch for Zend_Validate_File_Count validator (count() fix)": "patches/005_zend_validate_file_count.patch"
+      "pedropanos/zf1-future": {
+        "Patch for Zend_Navigation component (isActive() implementation for URI page)": "patches/003_zend_navigation_patch"
       }
     }
   }

@@ -27,7 +27,7 @@
 use iMSCP\Config\FileConfig;
 use iMSCP\Exception\Exception;
 use iMSCP\Registry;
-use Zend\Escaper\Escaper;
+use Laminas\Escaper\Escaper;
 use iMSCP\Validate\CommonValidation as CommonValidation;
 
 global $ESCAPER;
