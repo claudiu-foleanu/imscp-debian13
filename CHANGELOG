@@ -72,6 +72,36 @@ WEB ADD-ONS (the i-MSCP GitHub repositories of the add-on packages are gone)
     Enhancement: Roundcube managesieve (Dovecot) and password plugins enabled
     Removed: RainLoop (abandoned upstream) and MonstaFTP (sources lost)
 
+SECURITY (from a security audit of the 1.5.4 changes and of the live server)
+    Fixed: Customers could read other customers' files (e.g. wp-config.php)
+           through symlinks served by Apache: SymLinksIfOwnerMatch, and
+           FollowSymLinks/ExecCGI can no longer be enabled from .htaccess files.
+           Sites with 'Options +FollowSymLinks' in .htaccess must replace it
+           with 'Options +SymLinksIfOwnerMatch'
+    Fixed: Customers could close/reopen any customer's support tickets
+           (SQL operator precedence in changeTicketStatus())
+    Fixed: Plaintext IMAP/POP3/SMTP authentication over unencrypted
+           connections when SSL is enabled; TLS >= 1.2 on SMTPS (465)
+    Fixed: Sury PHP repository could override any Debian package (APT pin
+           1001 for '*'); now 990 for PHP packages only, 100 for the rest
+    Fixed: Panel session cookie without Secure/HttpOnly/SameSite flags;
+           missing security headers (HSTS, X-Frame-Options, nosniff,
+           Referrer-Policy); display_errors enabled; 'Cache-Control: public'
+    Fixed: Dovecot quota warning script, writable by vmail, run as root
+    Fixed: Courier private key copy briefly world-readable on creation
+    Fixed: Plugins: root following symlinks in directories owned by the
+           opendkim, clamav, debian-spamd and panel users (privilege
+           escalation from compromised daemons); world-accessible spamd and
+           milter sockets; world-writable plugin files
+    Fixed: Web add-ons: SQL file run through the mariadb client as root
+           (shell escapes); system files rendered from panel-writable
+           templates; archive extraction hardening; root symlink following;
+           phpMyAdmin control user could read MySQL password hashes;
+           elFinder login throttling could block the panel (sleep)
+    Fixed: imscp/composer-installers: empty/unvalidated install paths
+    Enhancement: Postfix: explicit smtpd_relay_restrictions, VRFY disabled,
+                 version removed from the SMTP banner
+
 PLUGINS
     Added: SGW_LetsEncrypt 1.6.0 plugin (GPL-2.0+, Cambell Prince) bundled;
            ported to the Debian certbot package (webroot authenticator,
@@ -85,6 +115,9 @@ PLUGINS
            Debian 13 (ClamAV 1.4, SpamAssassin 4.0 / spamd unit, DBD::MariaDB,
            schema migration for SpamAssassin 4, Roundcube 1.6 markasjunk and
            sauserprefs 1.20.2, clamav-unofficial-sigs 8.0.0)
+    Added: OpenDMARC 1.0.0 plugin: _dmarc DNS record per domain/alias with
+           customer (Domains -> DMARC) and reseller panel pages, and inbound
+           DMARC verification through the opendmarc milter
     Fixed: SpamAssassin: messages reported as spam/ham by users were never
            deleted after learning; Roundcube integration never configured
            (renamed parameter); SQL preferences failed with DBD::MariaDB

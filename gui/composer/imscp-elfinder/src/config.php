@@ -39,7 +39,11 @@ return [
     'ftp_port'           => 21,
     // Whether explicit FTPS (AUTH TLS) must be used
     'ftp_ssl'            => '{FTP_SSL}' === 'true',
+    // Timeout for FTP operations made by the file manager (seconds)
     'ftp_timeout'        => 15,
+    // Timeout for the FTP connection made to check credentials at login
+    // (seconds). Must be kept short as the PHP-FPM worker is blocked meanwhile.
+    'ftp_login_timeout'  => 5,
 
     // Directory for temporary data (sessions, transfers, rate limiting)
     'tmp_dir'            => '{TMP_DIR}',
@@ -52,9 +56,11 @@ return [
     'idle_timeout'       => 1800,
     'max_lifetime'       => 28800,
 
-    // Brute-force protection: maximum failed logins per client IP address
-    // within the given time window (seconds)
+    // Brute-force protection: maximum failed logins per client IP address and
+    // per username within the given time window (seconds). Once reached,
+    // login attempts are rejected immediately with HTTP 429 (Retry-After).
     'max_login_failures' => 10,
+    'max_user_login_failures' => 10,
     'login_window'       => 900,
 
     // Maximum size of uploaded files

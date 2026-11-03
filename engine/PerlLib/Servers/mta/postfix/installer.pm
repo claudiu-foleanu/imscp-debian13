@@ -502,10 +502,14 @@ sub _buildMainCfFile
         my %params;
 
         if ( version->parse( $self->{'config'}->{'POSTFIX_VERSION'} ) >= version->parse( '2.10.0' ) ) {
+            # Defense in depth: don't rely only on smtpd_recipient_restrictions
+            # (which a listener or plugin could rewrite) to prevent relaying
             $params{'smtpd_relay_restrictions'} = {
                 action => 'replace',
-                values => [ '' ],
-                empty  => 1
+                values => [
+                    'permit_mynetworks', 'permit_sasl_authenticated',
+                    'reject_unauth_destination'
+                ]
             };
         }
 
@@ -566,9 +570,19 @@ sub _buildMainCfFile
                 action => 'replace',
                 values => [ "$::imscpConfig{'CONF_DIR'}/imscp_services.pem" ]
             },
+            # Security: only offer SASL authentication over TLS
             smtpd_tls_auth_only              => {
                 action => 'replace',
-                values => [ 'no' ]
+                values => [ 'yes' ]
+            },
+            # Security: mandatory TLS (submissions, port 465) - no TLS < 1.2
+            smtpd_tls_mandatory_protocols    => {
+                action => 'replace',
+                values => [ '>=TLSv1.2' ]
+            },
+            smtpd_tls_mandatory_ciphers      => {
+                action => 'replace',
+                values => [ 'high' ]
             },
             smtpd_tls_received_header        => {
                 action => 'replace',

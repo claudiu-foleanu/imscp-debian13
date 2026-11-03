@@ -53,7 +53,6 @@ http {
     gzip_comp_level 6;
     gzip_proxied any;
     gzip_types text/plain application/x-javascript text/xml text/css;
-    add_header Cache-Control public;
 
     include {HTTPD_CONF_DIR}/mime.types;
     default_type text/html;

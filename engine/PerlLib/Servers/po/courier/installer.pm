@@ -779,9 +779,13 @@ sub _buildSslConfFiles
     # a private copy of the services certificate that it can read, rather than
     # granting access to the i-MSCP configuration directory.
     my $certFile = "$self->{'config'}->{'AUTHLIB_CONF_DIR'}/imscp_services.pem";
-    my $rs = iMSCP::File->new(
-        filename => "$::imscpConfig{'CONF_DIR'}/imscp_services.pem"
-    )->copyFile( $certFile, { preserve => 'no' } );
+    # The file contains the private key: never create it world-readable
+    my $rs = do {
+        local $UMASK = 027;
+        iMSCP::File->new(
+            filename => "$::imscpConfig{'CONF_DIR'}/imscp_services.pem"
+        )->copyFile( $certFile, { preserve => 'no' } );
+    };
     $rs ||= setRights( $certFile, {
         user  => $::imscpConfig{'ROOT_USER'},
         group => $self->getCourierGroup(),

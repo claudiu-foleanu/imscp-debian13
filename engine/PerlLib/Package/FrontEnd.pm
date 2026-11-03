@@ -1962,8 +1962,9 @@ sub _buildPhpConfig
     $rs ||= $self->buildConfFile(
         "$self->{'cfgDir'}/php.ini",
         {
-            PEAR_DIR => $self->{'config'}->{'PHP_PEAR_DIR'},
-            TIMEZONE => ::setupGetQuestion( 'TIMEZONE' )
+            PANEL_COOKIE_SECURE => ::setupGetQuestion( 'PANEL_SSL_ENABLED' ) eq 'yes' ? 1 : 0,
+            PEAR_DIR            => $self->{'config'}->{'PHP_PEAR_DIR'},
+            TIMEZONE            => ::setupGetQuestion( 'TIMEZONE' )
         },
         {
             destination => '/usr/local/etc/imscp_panel/php.ini',

@@ -13,9 +13,10 @@ fi
 
 umask 022
 
-# The channel isn't GPG signed with a key known by sa-update, hence --nogpg
+# Signature verification: --gpgkey <fingerprint> when the gpg_key plugin
+# parameter is set, --nogpg otherwise (no verification, see plugin config.php)
 env -i LANG="$LANG" PATH="$PATH" http_proxy="$http_proxy" https_proxy="$https_proxy" \
-    runuser -u {SPAMD_USER} -- /usr/bin/sa-update --nogpg --channel {CHANNEL} 2>&1
+    runuser -u {SPAMD_USER} -- /usr/bin/sa-update {GPG_OPTIONS} --channel {CHANNEL} 2>&1
 
 case $? in
     0)

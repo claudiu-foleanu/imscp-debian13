@@ -1,7 +1,7 @@
 {
   "name": "imscp/phpmyadmin",
   "type": "imscp-tool",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "license": "LGPL-2.1-only",
   "description": "Provides the PhpMyAdmin SQL administration tool for i-MSCP (integration layer; upstream phpMyAdmin is fetched at setup time)",
   "keywords": [

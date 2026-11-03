@@ -75,9 +75,13 @@
     <php
             description="PHP version for customers"
             has_alternatives="1"
-            pinning_package="*"
+            pinning_package="
+                php* libapache2-mod-php* libphp* dh-php pkg-php-tools
+                libc-client2007e libpcre3 mlock libgd3
+            "
             pinning_pin="origin packages.sury.org"
-            pinning_pin_priority="1001"
+            pinning_pin_priority="990"
+            pinning_fallback_priority="100"
             repository="https://packages.sury.org/php/ trixie main"
             repository_conflict="http://packages.dotdeb.org"
             repository_key_uri="https://packages.sury.org/php/apt.gpg"

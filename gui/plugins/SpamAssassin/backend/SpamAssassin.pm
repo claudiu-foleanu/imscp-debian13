@@ -34,8 +34,11 @@ use autouse 'iMSCP::Rights' => qw/ setRights /;
 use autouse 'iMSCP::TemplateParser' => qw/ process replaceBloc /;
 use Class::Autouse qw/ :nostat
     iMSCP::Database iMSCP::Dir iMSCP::File iMSCP::Service iMSCP::SystemUser Servers::cron Servers::mta Servers::sqld /;
-use File::Basename qw/ basename /;
+use Cwd qw/ realpath /;
+use Fcntl qw/ O_RDONLY O_NOFOLLOW O_NONBLOCK O_DIRECTORY S_ISDIR S_ISREG S_ISVTX S_IWGRP S_IWOTH /;
+use File::Basename qw/ dirname /;
 use iMSCP::Umask;
+use POSIX ();
 use List::MoreUtils qw/ uniq /;
 use Module::Load::Conditional qw/ check_install /;
 use version;
@@ -48,6 +51,20 @@ my @RC_PLUGINS_3RD_PARTY = qw/ sauserprefs /;
 =head1 DESCRIPTION
 
  This package provides the backend part for the i-MSCP SpamAssassin plugin.
+
+ Security notes:
+  - The SPAMD(8p) home directory (/var/lib/spamassassin) is owned by the
+    SPAMD(8p) user. Its subdirectories are created/updated as that user
+    (RUNUSER(1)); root never changes ownership/permissions through a path
+    controlled by that user.
+  - The sa-learn spool directories are owned by the panel user (written by
+    the markasjunk Roundcube plugin). They are created as the panel user. The
+    learning task (run as root by cron) pins each directory (chdir + inode
+    check), opens messages with O_NOFOLLOW, feeds them to SA-LEARN(1p) through
+    its standard input and runs SA-LEARN(1p) as the SPAMD(8p) user.
+  - The cron tasks run plugin scripts that load this (panel user owned)
+    backend as root. This is by design in i-MSCP (all plugin backends run as
+    root); the panel user is therefore root-equivalent.
 
 =head1 PUBLIC METHODS
 
@@ -314,7 +331,10 @@ sub cleanAwlDb
 
 sub cleanBayesDb
 {
-    my $rs = execute( [ 'sa-learn', '--force-expire' ], \my $stdout, \my $stderr );
+    my ( $self ) = @_;
+
+    # The Bayes database is stored in SQL. No need for root privileges.
+    my $rs = execute( [ $self->_spamdUserCmd( 'sa-learn', '--force-expire' ) ], \my $stdout, \my $stderr );
     debug( $stdout ) if $stdout;
     error( $stderr || 'Unknown error' ) if $rs;
     $rs;
@@ -337,54 +357,96 @@ sub bayesSaLearn
     my ( $self ) = @_;
 
     my $saLearnDir = $self->{'_sa_learn_dir'};
-    my $learned = 0;
+    my $panelUid = getpwnam( $self->{'_panel_user'} );
+    defined $panelUid or do {
+        error( "Couldn't find the panel unix user" );
+        return 1;
+    };
 
-    for my $learningMode ( qw/ spam ham / ) {
+    my $learned = 0;
+    my $rs = 0;
+
+    local $@;
+    eval {
         # New layout (markasjunk): <saLearnDir>/<spam|ham>/<username>__XXXXXX
         # Legacy layout (markasjunk2): <saLearnDir>/<username>__<spam|ham>__XXXXXX
-        for my $entry (
-            ( map { [ $_, qr/^(.+)__[A-Za-z0-9]{6}$/ ] } <$saLearnDir/$learningMode/*> ),
-            ( map { [ $_, qr/^(.+)__${learningMode}__[A-Za-z0-9]{6}$/ ] } <$saLearnDir/*__${learningMode}__*> )
+        for my $spec (
+            [ $saLearnDir, undef ],
+            [ "$saLearnDir/spam", 'spam' ],
+            [ "$saLearnDir/ham", 'ham' ]
         ) {
-            my ( $file, $regexp ) = @{ $entry };
+            my ( $dir, $dirMode ) = @{ $spec };
 
-            # The directory is writable by the panel user. Never follow symlinks
-            # (they are removed) and only consider regular files.
-            if ( -l $file ) {
-                unlink( $file );
-                next;
-            }
-            next unless -f _;
+            # The directories are writable by the panel user. Pin the
+            # directory (chdir + inode check) so that it can't be swapped with
+            # a symlink while being processed. All operations below use
+            # relative filenames.
+            next unless _pinDirectory( $dir, $panelUid );
 
-            my ( $username ) = basename( $file ) =~ $regexp;
+            opendir( my $dh, '.' ) or die( sprintf( "Couldn't open the %s directory: %s", $dir, $! ));
+            my @entries = grep { !/^\.{1,2}\z/s } readdir( $dh );
+            closedir( $dh );
 
-            if ( defined $username && $username =~ /^[^\s\/\@-][^\s\/\@]*\@[^\s\/\@]+$/ ) {
-                my $rs = execute(
-                    [ 'sa-learn', '--no-sync', "--$learningMode", '-u', $username, $file ], \my $stdout, \my $stderr
-                );
-                debug( $stdout ) if $stdout;
-                if ( $rs ) {
-                    # Keep the file. It will be processed again on next run.
-                    error( sprintf( "Couldn't learn the %s message: %s", $file, $stderr || 'Unknown error' ));
-                    return $rs;
+            for my $entry ( @entries ) {
+                my ( $username, $mode );
+                if ( defined $dirMode ) {
+                    ( $username ) = $entry =~ /^(.+)__[A-Za-z0-9]{6}$/;
+                    $mode = $dirMode;
+                } else {
+                    # Only legacy files in the base directory (never touch
+                    # .gitkeep, .gitignore, spam/ or ham/)
+                    ( $username, $mode ) = $entry =~ /^(.+)__(spam|ham)__[A-Za-z0-9]{6}$/ or next;
                 }
-                $learned++;
-            } else {
-                debug( sprintf( 'Skipping %s file: unexpected filename', $file ));
-            }
 
-            # Messages contain private user data. Remove them once processed.
-            unless ( unlink( $file ) ) {
-                error( sprintf( "Couldn't remove the %s file: %s", $file, $! ));
-                return 1;
+                lstat $entry or next;
+                if ( -l _ ) {
+                    # Never follow symlinks; just remove them
+                    unlink( $entry );
+                    next;
+                }
+                next unless -f _;
+
+                sysopen( my $fh, $entry, O_RDONLY | O_NOFOLLOW | O_NONBLOCK ) or do {
+                    debug( sprintf( "Couldn't open the %s/%s file: %s", $dir, $entry, $! ));
+                    next;
+                };
+                my @st = stat $fh;
+
+                # Only learn regular files owned by the panel user, with a single
+                # link (no hard link to a file we shouldn't read)
+                if ( S_ISREG( $st[2] ) && $st[4] == $panelUid && $st[3] == 1
+                    && defined $username && $username =~ /^[^\s\/\@-][^\s\/\@]*\@[^\s\/\@]+$/
+                ) {
+                    my ( $ret, $output ) = $self->_saLearnFromFh( $fh, $mode, $username );
+                    debug( $output ) if length $output;
+                    if ( $ret ) {
+                        # Keep the file. It will be processed again on next run.
+                        error( sprintf( "Couldn't learn the %s/%s message: %s", $dir, $entry, $output || 'Unknown error' ));
+                        $rs = $ret;
+                        return;
+                    }
+                    $learned++;
+                } else {
+                    debug( sprintf( 'Skipping %s/%s file: unexpected filename, owner or type', $dir, $entry ));
+                }
+                close( $fh );
+
+                # Messages contain private user data. Remove them once processed.
+                unlink( $entry ) or die( sprintf( "Couldn't remove the %s/%s file: %s", $dir, $entry, $! ));
             }
         }
+    };
+    my $err = $@;
+    chdir( '/' );
+    if ( $err ) {
+        error( $err );
+        return 1;
     }
 
-    return 0 unless $learned;
+    return $rs if $rs || !$learned;
 
     # Synchronize the database and the journal once per training session
-    my $rs = execute( [ 'sa-learn', '--sync' ], \my $stdout, \my $stderr );
+    $rs = execute( [ $self->_spamdUserCmd( 'sa-learn', '--sync' ) ], \my $stdout, \my $stderr );
     debug( $stdout ) if $stdout;
     error( $stderr || 'Unknown error' ) if $rs;
     $rs;
@@ -476,6 +538,88 @@ sub _init
     $self;
 }
 
+=item _spamdUserCmd( @command )
+
+ Return the given command, wrapped to be run as the SPAMD(8p) user with a
+ clean environment
+
+ Param list @command Command and its arguments
+ Return list
+
+=cut
+
+sub _spamdUserCmd
+{
+    my ( $self, @command ) = @_;
+
+    (
+        'runuser', '-u', $self->{'config'}->{'spamd'}->{'user'}, '--',
+        'env', '-i', "HOME=$self->{'config'}->{'spamd'}->{'homedir'}", 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C',
+        @command
+    );
+}
+
+=item _saLearnFromFh( $fh, $mode, $username )
+
+ Learn the message read from the given file handle (fed to SA-LEARN(1p) on
+ its standard input), as the SPAMD(8p) user
+
+ Param filehandle $fh Message file handle
+ Param string $mode Learning mode (spam|ham)
+ Param string $username SpamAssassin username
+ Return list (exit status, output)
+
+=cut
+
+sub _saLearnFromFh
+{
+    my ( $self, $fh, $mode, $username ) = @_;
+
+    my @command = $self->_spamdUserCmd( 'sa-learn', '--no-sync', "--$mode", '-u', $username );
+
+    sysseek( $fh, 0, 0 );
+    my $pid = open( my $out, '-|' );
+    defined $pid or return ( 1, "Couldn't fork: $!" );
+
+    unless ( $pid ) {
+        # Child
+        open( STDIN, '<&', $fh ) or POSIX::_exit( 127 );
+        open( STDERR, '>&', \*STDOUT ) or POSIX::_exit( 127 );
+        chdir( '/' );
+        exec { $command[0] } @command or POSIX::_exit( 127 );
+    }
+
+    my $output = do { local $/; <$out> } // '';
+    close( $out );
+    ( $? == 0 ? 0 : ( $? >> 8 ) || 1, $output );
+}
+
+=item _runAsUser( $user, @command )
+
+ Run the given command as the given user (RUNUSER(1))
+
+ Used to create/update files inside directories owned by unprivileged users,
+ so that symlinks planted by those users can't be abused.
+
+ Param string $user Username
+ Param list @command Command and its arguments
+ Return void, die on failure
+
+=cut
+
+sub _runAsUser
+{
+    my ( undef, $user, @command ) = @_;
+
+    my $rs = execute(
+        [ 'runuser', '-u', $user, '--', 'env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'LANG=C', @command ],
+        \my $stdout,
+        \my $stderr
+    );
+    debug( $stdout ) if $stdout;
+    $rs == 0 or die( sprintf( "Couldn't run '%s' as %s: %s", "@command", $user, $stderr || 'Unknown error' ));
+}
+
 =item _installDistributionPackages( )
 
  Install required distribution packages
@@ -543,17 +687,15 @@ sub _createSpamdUser
 
     local $@;
     eval {
-        iMSCP::Dir->new( dirname => $homedir )->make( {
-            user  => $user,
-            group => $group,
-            mode  => 0755
-        } );
+        # The home directory itself lives in a root-owned directory: create it
+        # (or fix it) as root, refusing symlinks
+        _secureDir( $homedir, $user, $group, 0755 );
 
-        iMSCP::Dir->new( dirname => "$homedir/sa-update-keys" )->make( {
-            user  => $user,
-            group => $group,
-            mode  => 0700
-        } );
+        # Subdirectories are created as the SPAMD(8p) user, as it owns the
+        # home directory (never chown/chmod as root through a path controlled
+        # by that user)
+        $self->_runAsUser( $user, 'mkdir', '-p', '-m', '0700', '--', "$homedir/sa-update-keys" );
+        $self->_runAsUser( $user, 'chmod', '0700', '--', "$homedir/sa-update-keys" );
 
         # Import the SpamAssassin rules signing key (already done by the
         # spamassassin package postinst script for the debian-spamd user)
@@ -596,11 +738,10 @@ sub _setupPyzor
 
     local $@;
     eval {
-        iMSCP::Dir->new( dirname => "$self->{'config'}->{'spamd'}->{'homedir'}/.pyzor" )->make( {
-            user  => $self->{'config'}->{'spamd'}->{'user'},
-            group => $self->{'config'}->{'spamd'}->{'group'},
-            mode  => 0700
-        } );
+        # Created as the SPAMD(8p) user (owner of the home directory)
+        my $dir = "$self->{'config'}->{'spamd'}->{'homedir'}/.pyzor";
+        $self->_runAsUser( $self->{'config'}->{'spamd'}->{'user'}, 'mkdir', '-p', '-m', '0700', '--', $dir );
+        $self->_runAsUser( $self->{'config'}->{'spamd'}->{'user'}, 'chmod', '0700', '--', $dir );
     };
     if ( $@ ) {
         error( $@ );
@@ -672,11 +813,19 @@ sub _configureHeinleinRuleset
     if ( $action eq 'configure' && $c->{'enabled'} ) {
         my $channel = $c->{'channel'} // 'spamassassin.heinlein-support.de';
         my $sleepTimer = $c->{'sleep_timer'} // 600;
+        my $gpgKey = $c->{'gpg_key'} // '';
+        $gpgKey =~ s/\s+//g;
 
-        unless ( $channel =~ /^[A-Za-z0-9.-]+$/ && $sleepTimer =~ /^\d+$/ ) {
-            error( 'Invalid heinlein_support_ruleset channel or sleep_timer configuration parameter' );
+        unless ( $channel =~ /^[A-Za-z0-9.-]+$/ && $sleepTimer =~ /^\d+$/ && $gpgKey =~ /^(?:[0-9A-Fa-f]{40})?$/ ) {
+            error( 'Invalid heinlein_support_ruleset channel, sleep_timer or gpg_key configuration parameter' );
             return 1;
         }
+
+        # Without GPG key, the channel updates can't be verified (--nogpg):
+        # the rules are only protected by TLS/DNS. See config.php.
+        my $gpgOptions = length $gpgKey
+            ? "--gpgkey $gpgKey --gpghomedir $self->{'config'}->{'spamd'}->{'homedir'}/sa-update-keys"
+            : '--nogpg';
 
         my $file = iMSCP::File->new(
             filename => "$::imscpConfig{'PLUGINS_DIR'}/SpamAssassin/config-templates/spamassassin/spamassassin_heinlein-support_de"
@@ -690,6 +839,7 @@ sub _configureHeinleinRuleset
         $fileContent = process(
             {
                 CHANNEL       => $channel,
+                GPG_OPTIONS   => $gpgOptions,
                 SLEEP_TIMER   => $sleepTimer,
                 SPAMD_USER    => $self->{'config'}->{'spamd'}->{'user'},
                 SPAMD_HOMEDIR => $self->{'config'}->{'spamd'}->{'homedir'},
@@ -707,16 +857,18 @@ sub _configureHeinleinRuleset
     }
 
     # Remove the channel rules (<homedir>/<sa_version>/spamassassin_heinlein-support_de{,.cf,...})
+    #
+    # The home directory is owned by the SPAMD(8p) user. The rules are
+    # removed as that user, and FIND(1) doesn't follow symlinks.
     local $@;
     eval {
-        for my $path ( glob( "$self->{'config'}->{'spamd'}->{'homedir'}/*/spamassassin_heinlein-support_de*" ) ) {
-            next if -l $path;
-            if ( -d _ ) {
-                iMSCP::Dir->new( dirname => $path )->remove();
-            } elsif ( -f _ ) {
-                unlink( $path ) or die( sprintf( "Couldn't remove the %s file: %s", $path, $! ));
-            }
-        }
+        my $homedir = $self->{'config'}->{'spamd'}->{'homedir'};
+        return unless -d $homedir && getpwnam( $self->{'config'}->{'spamd'}->{'user'} );
+        $self->_runAsUser(
+            $self->{'config'}->{'spamd'}->{'user'},
+            'find', $homedir, '-mindepth', '2', '-maxdepth', '2', '-name', 'spamassassin_heinlein-support_de*',
+            '-exec', 'rm', '-rf', '--', '{}', '+'
+        );
     };
     if ( $@ ) {
         error( $@ );
@@ -1440,13 +1592,12 @@ sub _configureRoundcubePlugins
     if ( $action eq 'configure' && $bayesLearning ) {
         local $@;
         eval {
-            for my $dir ( $self->{'_sa_learn_dir'}, "$self->{'_sa_learn_dir'}/spam", "$self->{'_sa_learn_dir'}/ham" ) {
-                iMSCP::Dir->new( dirname => $dir )->make( {
-                    user  => $self->{'_panel_user'},
-                    group => $self->{'_panel_group'},
-                    mode  => 0700
-                } );
-            }
+            # The directories live in the panel user owned plugin directory.
+            # They are created as the panel user (never chown/chmod as root
+            # through a path controlled by that user).
+            my @dirs = ( $self->{'_sa_learn_dir'}, "$self->{'_sa_learn_dir'}/spam", "$self->{'_sa_learn_dir'}/ham" );
+            $self->_runAsUser( $self->{'_panel_user'}, 'mkdir', '-p', '-m', '0700', '--', @dirs );
+            $self->_runAsUser( $self->{'_panel_user'}, 'chmod', '0700', '--', @dirs );
         };
         if ( $@ ) {
             error( $@ );
@@ -1652,6 +1803,148 @@ sub _installSaPlugins
     }
 
     0;
+}
+
+=back
+
+=head1 FUNCTIONS (symlink-safe file operations)
+
+=over 4
+
+=item _pinDirectory( $dir, $uid )
+
+ Change the current directory to the given directory, making sure that it is
+ a real directory (not a symlink) owned by the given UID (or by root)
+
+ Once the current directory is set, it refers to the directory inode: it
+ can't be redirected anymore, even if the path is changed afterwards.
+
+ Param string $dir Directory path
+ Param int $uid Expected owner UID
+ Return bool TRUE if the directory has been pinned, FALSE if it doesn't exist, die on failure
+
+=cut
+
+sub _pinDirectory
+{
+    my ( $dir, $uid ) = @_;
+
+    my @lst = lstat $dir or return 0;
+    die( sprintf( 'Refusing to process %s: symlink', $dir )) if -l _;
+    die( sprintf( 'Refusing to process %s: not a directory', $dir )) unless -d _;
+    die( sprintf( 'Refusing to process %s: unexpected owner (UID %d)', $dir, $lst[4] )) unless $lst[4] == $uid || $lst[4] == 0;
+
+    chdir( $dir ) or die( sprintf( "Couldn't change directory to %s: %s", $dir, $! ));
+    my @st = stat '.';
+    $st[0] == $lst[0] && $st[1] == $lst[1] or die( sprintf( '%s has been replaced. Aborting.', $dir ));
+    1;
+}
+
+=item _ugid( $user, $group )
+
+ Resolve the given user and group (names or numeric IDs)
+
+ Return list (uid, gid), die on failure
+
+=cut
+
+sub _ugid
+{
+    my ($user, $group) = @_;
+
+    my $uid = $user =~ /^\d+$/ ? $user : getpwnam( $user );
+    my $gid = $group =~ /^\d+$/ ? $group : getgrnam( $group );
+    defined $uid or die( sprintf( 'Unknown user: %s', $user ));
+    defined $gid or die( sprintf( 'Unknown group: %s', $group ));
+    ( $uid, $gid );
+}
+
+=item _assertTrustedDir( $dir )
+
+ Make sure that no unprivileged user can replace any component of the given
+ directory path (and so redirect a write made by root)
+
+ Each path component must be owned by root. Ancestors must not be writable by
+ group/others unless the sticky bit is set (the next component being
+ root-owned, it can't be renamed/removed). The directory itself must not be
+ writable by group (unless group is root) or others.
+
+ Param string $dir Directory path
+ Return void, die if the directory isn't trusted
+
+=cut
+
+sub _assertTrustedDir
+{
+    my ($dir) = @_;
+
+    my $real = realpath( $dir );
+    defined $real && -d $real or die( sprintf( "Couldn't resolve the %s directory: %s", $dir, $! || 'not a directory' ));
+
+    my @components = grep { length } split m%/%, $real;
+    my $path = '';
+    for my $i ( -1 .. $#components ) {
+        $path .= $i < 0 ? '/' : ( $i ? '/' : '' ) . $components[$i];
+        my @st = lstat $path or die( sprintf( "Couldn't stat %s: %s", $path, $! ));
+        die( sprintf( 'Untrusted path %s: %s is not owned by root', $dir, $path )) if $st[4] != 0;
+
+        my $groupWritable = ( $st[2] & S_IWGRP ) && $st[5] != 0;
+        my $otherWritable = $st[2] & S_IWOTH;
+        next unless $groupWritable || $otherWritable;
+        next if $i < $#components && ( $st[2] & S_ISVTX );
+        die( sprintf( 'Untrusted path %s: %s is writable by non-root users', $dir, $path ));
+    }
+}
+
+=item _secureDir( $dir, $user, $group, $mode )
+
+ Create the given directory if needed, and set its ownership and permissions
+
+ The parent directory must be trusted (see _assertTrustedDir()). Symlinks are
+ refused. Ownership and permissions are set through a file descriptor opened
+ with O_NOFOLLOW (no TOCTOU race).
+
+ Param string $dir Directory path
+ Param string|int $user Owner (name or UID)
+ Param string|int $group Group (name or GID)
+ Param int $mode Mode
+ Return void, die on failure
+
+=cut
+
+sub _secureDir
+{
+    my ($dir, $user, $group, $mode) = @_;
+
+    my ($uid, $gid) = _ugid( $user, $group );
+    $dir =~ s%/+$%%;
+    my $parent = dirname( $dir );
+
+    unless ( -d $parent ) {
+        # Missing parents are created root:root 0755
+        iMSCP::Dir->new( dirname => $parent )->make( { user => 0, group => 0, mode => 0755 } );
+    }
+
+    _assertTrustedDir( $parent );
+
+    unless ( lstat $dir ) {
+        $!{'ENOENT'} or die( sprintf( "Couldn't stat %s: %s", $dir, $! ));
+        mkdir( $dir, 0700 ) or $!{'EEXIST'} or die( sprintf( "Couldn't create the %s directory: %s", $dir, $! ));
+        lstat $dir or die( sprintf( "Couldn't stat %s: %s", $dir, $! ));
+    }
+
+    die( sprintf( 'Refusing to process %s: symlink', $dir )) if -l _;
+    die( sprintf( 'Refusing to process %s: not a directory', $dir )) unless -d _;
+    my @lst = lstat _;
+
+    sysopen( my $fh, $dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW ) or die(
+        sprintf( "Couldn't open the %s directory: %s", $dir, $! )
+    );
+    my @st = stat $fh;
+    $st[0] == $lst[0] && $st[1] == $lst[1] && S_ISDIR( $st[2] ) or die( sprintf( '%s has been replaced. Aborting.', $dir ));
+    chown( $uid, $gid, $fh ) or die( sprintf( "Couldn't set ownership on %s: %s", $dir, $! ));
+    chmod( $mode, $fh ) or die( sprintf( "Couldn't set permissions on %s: %s", $dir, $! ));
+    close( $fh );
 }
 
 =back

@@ -332,7 +332,8 @@ sub setEnginePermissions
     $rs ||= setRights(
         "$::imscpConfig{'ENGINE_ROOT_DIR'}/quota/imscp-dovecot-quota.sh",
         {
-            user  => $self->{'mta'}->{'config'}->{'MTA_MAILBOX_UID_NAME'},
+            # Security: the script must not be writable by the vmail user
+            user  => $::imscpConfig{'ROOT_USER'},
             group => $self->{'mta'}->{'config'}->{'MTA_MAILBOX_GID_NAME'},
             mode  => '0750'
         }

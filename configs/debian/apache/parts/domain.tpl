@@ -38,10 +38,13 @@
     # SECTION php_on END.
 
     <Directory "{DOCUMENT_ROOT}">
-        Options FollowSymLinks
+        Options SymLinksIfOwnerMatch
         # SECTION php_on BEGIN.
         DirectoryIndex index.php
-        AllowOverride All
+        # Security: customers can't enable FollowSymLinks or CGI execution
+        # through .htaccess files (cross-customer file disclosure via symlinks)
+        AllowOverride AuthConfig FileInfo Indexes Limit \
+            Options=Indexes,MultiViews,SymLinksIfOwnerMatch Nonfatal=Override
         # SECTION fcgid BEGIN.
         Options +ExecCGI
         FCGIWrapper "{PHP_FCGI_STARTER_DIR}/{FCGID_NAME}/php-fcgi-starter"
@@ -81,7 +84,7 @@
         AllowOverride AuthConfig Indexes Limit Options=Indexes,MultiViews \
             Fileinfo=RewriteEngine,RewriteOptions,RewriteBase,RewriteCond,RewriteRule Nonfatal=Override
         DirectoryIndex index.cgi index.pl index.py index.rb
-        Options FollowSymLinks ExecCGI
+        Options SymLinksIfOwnerMatch ExecCGI
         AddHandler cgi-script .cgi .pl .py .rb
         Require all granted
     </Directory>
@@ -102,7 +105,7 @@
 
     # SECTION fwd BEGIN.
     <Directory "{DOCUMENT_ROOT}">
-        Options FollowSymLinks
+        Options SymLinksIfOwnerMatch
         AllowOverride AuthConfig Indexes Limit Options=Indexes,MultiViews \
             Fileinfo=RewriteEngine,RewriteOptions,RewriteBase,RewriteCond,RewriteRule Nonfatal=Override
         Require all granted

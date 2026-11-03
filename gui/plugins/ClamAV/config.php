@@ -58,8 +58,14 @@ return array(
         // /var/spool/postfix/clamav/clamav-milter.ctl for connection through UNIX socket
         //  inet:32767@localhost for connection through TCP
         'MilterSocket'              => '/var/spool/postfix/clamav/clamav-milter.ctl',
-        'MilterSocketGroup'         => 'clamav',
-        'MilterSocketMode'          => '666',
+        // Milter socket group and mode
+        //
+        // The socket is only made accessible to the Postfix user (smtpd(8) and
+        // cleanup(8) services) through its primary group. Don't make it
+        // world-accessible (666): any local user could then talk to the
+        // milter.
+        'MilterSocketGroup'         => 'postfix',
+        'MilterSocketMode'          => '660',
         'FixStaleSocket'            => 'true',
         'User'                      => 'clamav',
         'ReadTimeout'               => '120',
@@ -71,6 +77,12 @@ return array(
         'ClamdSocket'               => 'unix:/run/clamav/clamd.ctl',
 
         // Exclusions options
+        //
+        // Messages larger than MaxFileSize are NOT scanned and are accepted
+        // as is (policy choice: scanning large messages is costly). Make sure
+        // that this value is lower or equal than the clamd.conf StreamMaxLength
+        // value, and consider raising it up to the Postfix message_size_limit
+        // value if you want all messages to be scanned.
         'MaxFileSize'               => '25M',
 
         // Actions options

@@ -31,7 +31,10 @@ use autouse 'iMSCP::Debug' => qw/ debug error /;
 use autouse 'iMSCP::Execute' => qw/ execute /;
 use autouse 'iMSCP::TemplateParser' => qw/ getBloc process replaceBloc /;
 use Class::Autouse qw/ :nostat iMSCP::Dir iMSCP::File iMSCP::Service Servers::mta /;
-use File::Spec;
+use Cwd qw/ realpath /;
+use Fcntl qw/ O_RDONLY O_WRONLY O_CREAT O_APPEND O_NOFOLLOW O_NONBLOCK O_DIRECTORY S_ISDIR S_ISREG S_ISVTX S_IWGRP S_IWOTH /;
+use File::Basename qw/ basename dirname /;
+use File::Temp ();
 use parent 'Common::SingletonClass';
 
 # clamav-unofficial-sigs script location. Older plugin versions installed it
@@ -42,10 +45,30 @@ my $CUS_CONF_DIR = '/etc/clamav-unofficial-sigs';
 my $CUS_WORK_DIR = '/var/lib/clamav-unofficial-sigs';
 my $CUS_LOG_DIR = '/var/log/clamav-unofficial-sigs';
 our $CLAMAV_MILTER_CONF = '/etc/clamav/clamav-milter.conf';
+# Unprivileged user/group as which the clamav-unofficial-sigs script is run
+# (must match the clam_user/clam_group values in os.conf)
+my $CUS_USER = 'clamav';
+my $CUS_GROUP = 'clamav';
+# Files installed by this plugin for clamav-unofficial-sigs (root-owned)
+my $CUS_CRON_FILE = '/etc/cron.d/clamav-unofficial-sigs';
+my $CUS_LOGROTATE_FILE = '/etc/logrotate.d/clamav-unofficial-sigs';
+my $CUS_MAN_FILE = '/usr/share/man/man8/clamav-unofficial-sigs.8';
+my $CUS_LOG_FILE = "$CUS_LOG_DIR/clamav-unofficial-sigs.log";
+# Official ClamAV databases (managed by freshclam), never purged
+my @CLAMAV_OFFICIAL_DBS = qw/ main daily bytecode freshclam /;
 
 =head1 DESCRIPTION
 
  i-MSCP ClamAV plugin backend.
+
+ Security notes:
+  - The clamav-unofficial-sigs script is never run as root. It is run as the
+    clamav user (signatures update), exactly like the cron task. The parts
+    that require root privileges (working/log directories, cron and logrotate
+    files) are done by this backend, with root-owned sources.
+  - On deactivation, the third-party databases listed in the purge.txt file
+    (written by the clamav user) are removed only if they are regular files
+    located directly in the ClamAV database directory.
 
 =head1 PUBLIC METHODS
 
@@ -307,17 +330,23 @@ sub _configureClamavUnofficialSigs
         $rs ||= $self->_configureClamavUnofficialSigsConffile( 'user.conf' );
         return $rs if $rs;
 
-        # Generate the cron, logrotate and man files
-        $rs = execute( [ $CUS_SCRIPT, '--install-all' ], \my $stdout, \my $stderr );
-        debug( $stdout ) if length $stdout;
-        error( sprintf(
-            "Couldn't install clamav-unofficial-sigs cron, logrotate and man files: %s",
-            $stderr || $stdout || 'Unknown error'
-        )) if $rs;
+        # Working and log directories, cron and logrotate files. This was
+        # previously done by running the script as root (--install-all),
+        # which followed symlinks in the clamav-writable directories.
+        $rs = $self->_setupClamavUnofficialSigsFiles();
         return $rs if $rs;
 
-        # First signatures update (silent mode)
-        $rs = execute( [ $CUS_SCRIPT, '--silence' ], \$stdout, \$stderr );
+        # First signatures update (silent mode), as the unprivileged clamav
+        # user (same as the cron task), with a clean environment
+        $rs = execute(
+            [
+                'runuser', '-u', $CUS_USER, '--', 'env', '-i',
+                'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', "HOME=$CUS_WORK_DIR", 'LANG=C',
+                '/bin/bash', $CUS_SCRIPT, '--silence'
+            ],
+            \my $stdout,
+            \my $stderr
+        );
         debug( $stdout ) if length $stdout;
         error( sprintf(
             "Couldn't update ClamAV unofficial signatures: %s", $stderr || $stdout || 'Unknown error'
@@ -329,6 +358,70 @@ sub _configureClamavUnofficialSigs
 
     # Remove user.conf file for deactivation
     iMSCP::File->new( filename => "$CUS_CONF_DIR/user.conf" )->delFile();
+}
+
+=item _setupClamavUnofficialSigsFiles( )
+
+ Create the clamav-unofficial-sigs working and log directories, and install
+ the cron and logrotate files
+
+ Ownership:
+  /var/lib/clamav-unofficial-sigs                    clamav:clamav 0755
+  /var/log/clamav-unofficial-sigs                    root:root     0755
+  /var/log/clamav-unofficial-sigs/*.log              clamav:adm    0640
+  /etc/cron.d/clamav-unofficial-sigs                 root:root     0644
+  /etc/logrotate.d/clamav-unofficial-sigs            root:root     0644
+
+ Return int 0 on success, other on failure
+
+=cut
+
+sub _setupClamavUnofficialSigsFiles
+{
+    local $@;
+    eval {
+        _secureDir( $CUS_WORK_DIR, $CUS_USER, $CUS_GROUP, 0755 );
+
+        # The log directory stays root-owned (logrotate(8) runs as root in it).
+        # Only the log file is owned by the clamav user.
+        _secureDir( $CUS_LOG_DIR, 0, 0, 0755 );
+        my $logGroup = getgrnam( 'adm' ) ? 'adm' : $CUS_GROUP;
+        sysopen( my $fh, $CUS_LOG_FILE, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK, 0640 ) or die(
+            sprintf( "Couldn't open %s: %s", $CUS_LOG_FILE, $! )
+        );
+        close( $fh );
+        _secureFile( $CUS_LOG_FILE, $CUS_USER, $logGroup, 0640 );
+
+        my $minute = int( rand( 60 ));
+        _writeFileAtomic( $CUS_CRON_FILE, <<"EOT", 0, 0, 0644 );
+# clamav-unofficial-sigs cron task
+# Auto-generated by the i-MSCP ClamAV plugin
+#     DO NOT EDIT THIS FILE BY HAND -- YOUR CHANGES WILL BE OVERWRITTEN
+#
+# The script is run as the unprivileged $CUS_USER user.
+$minute * * * * $CUS_USER [ -x $CUS_SCRIPT ] && /bin/bash $CUS_SCRIPT >/dev/null 2>&1
+EOT
+
+        _writeFileAtomic( $CUS_LOGROTATE_FILE, <<"EOT", 0, 0, 0644 );
+# clamav-unofficial-sigs logrotate configuration
+# Auto-generated by the i-MSCP ClamAV plugin
+#     DO NOT EDIT THIS FILE BY HAND -- YOUR CHANGES WILL BE OVERWRITTEN
+$CUS_LOG_FILE {
+  weekly
+  rotate 4
+  missingok
+  notifempty
+  compress
+  create 0640 $CUS_USER $logGroup
+}
+EOT
+    };
+    if ( $@ ) {
+        error( $@ );
+        return 1;
+    }
+
+    0;
 }
 
 =item _configureClamavUnofficialSigsConffile( $confFile )
@@ -418,41 +511,19 @@ sub _disableClamavUnofficialSigs
 {
     return 0 unless -d $CUS_WORK_DIR;
 
-    my @files = (
-        '/etc/cron.d/clamav-unofficial-sigs',
-        '/etc/logrotate.d/clamav-unofficial-sigs',
-        '/usr/share/man/man8/clamav-unofficial-sigs.8'
-    );
-
-    # The purge.txt file lists the third-party databases installed by the
-    # script. Because the file is written by the clamav user (cron task), only
-    # paths that belong to the ClamAV databases or script directories are
-    # honored.
-    my $purgeFile = "$CUS_WORK_DIR/configs/purge.txt";
-    if ( -f $purgeFile && !-l $purgeFile ) {
-        my $fileContent = iMSCP::File->new( filename => $purgeFile )->get();
-        unless ( defined $fileContent ) {
-            error( sprintf( "Couldn't read the %s file", $purgeFile ));
-            return 1;
-        }
-
-        for my $path ( split /\n/, $fileContent ) {
-            $path =~ s/^\s+|\s+$//g;
-            next unless length $path
-                && $path !~ m%(?:^|/)\.\.(?:/|$)%
-                && $path =~ m%^(?:/var/lib/clamav|\Q$CUS_WORK_DIR\E|\Q$CUS_LOG_DIR\E|\Q$CUS_CONF_DIR\E)/[^\0]+$%;
-            push @files, File::Spec->canonpath( $path );
-        }
-    }
-
-    for my $file ( @files ) {
+    # Root-owned files installed by this plugin (or by older plugin versions)
+    for my $file ( $CUS_CRON_FILE, $CUS_LOGROTATE_FILE, $CUS_MAN_FILE ) {
         next unless -f $file || -l $file;
         my $rs = iMSCP::File->new( filename => $file )->delFile();
         return $rs if $rs;
     }
 
+    # Third-party databases installed by the script
     local $@;
     eval {
+        _purgeClamavUnofficialSigsDatabases( "$CUS_WORK_DIR/configs/purge.txt", '/var/lib/clamav' );
+
+        # File::Path::remove_tree() doesn't follow symlinks
         iMSCP::Dir->new( dirname => $_ )->remove() for $CUS_CONF_DIR, $CUS_WORK_DIR, $CUS_LOG_DIR;
     };
     if ( $@ ) {
@@ -473,6 +544,56 @@ sub _disableClamavUnofficialSigs
     }
 
     0;
+}
+
+=item _purgeClamavUnofficialSigsDatabases( $purgeFile, $dbDir )
+
+ Remove the third-party databases listed in the given purge file
+
+ The purge file is written by the clamav user, hence its content is
+ untrusted. Only entries of the form <dbDir>/<filename> are honored, and only
+ if they are regular files (no subdirectory, no symlink, no official
+ database). unlink(2) never follows a symlink in the last path component, and
+ the database directory itself must be a real directory in a root-owned
+ parent, so that it can't be redirected elsewhere.
+
+ Param string $purgeFile Purge file path
+ Param string $dbDir ClamAV database directory
+ Return void, die on failure
+
+=cut
+
+sub _purgeClamavUnofficialSigsDatabases
+{
+    my ($purgeFile, $dbDir) = @_;
+
+    return unless lstat $purgeFile;
+    return unless -f _; # Refuse symlinks and special files
+
+    lstat $dbDir or return;
+    die( sprintf( 'Refusing to purge databases: %s is not a directory (symlink?)', $dbDir )) unless -d _ && !-l _;
+    _assertTrustedDir( dirname( $dbDir ));
+
+    sysopen( my $fh, $purgeFile, O_RDONLY | O_NOFOLLOW | O_NONBLOCK ) or die(
+        sprintf( "Couldn't open %s: %s", $purgeFile, $! )
+    );
+    my %seen;
+    while ( my $path = <$fh> ) {
+        $path =~ s/^\s+|\s+$//g;
+        next unless length $path;
+
+        # Only "<dbDir>/<filename>" entries, where filename is a plain name
+        my ($name) = $path =~ m%^\Q$dbDir\E/+([A-Za-z0-9][A-Za-z0-9._-]*)$% or next;
+        next if $seen{$name}++;
+        next if grep { $name =~ /^\Q$_\E\./ } @CLAMAV_OFFICIAL_DBS;
+
+        my $file = "$dbDir/$name";
+        lstat $file or next;
+        next unless -f _; # Not a regular file (symlink, directory...)
+        unlink( $file ) or die( sprintf( "Couldn't remove %s: %s", $file, $! ));
+        debug( sprintf( 'Removed the %s third-party ClamAV database', $file ));
+    }
+    close( $fh );
 }
 
 =item _configureClamavMilter( [ $action = 'deconfigure' ] )
@@ -542,11 +663,12 @@ sub _configureClamavMilter
     ( my $socketDir = $socket ) =~ s%/[^/]+$%%;
     local $@;
     eval {
-        iMSCP::Dir->new( dirname => $socketDir )->make( {
-            user  => $options->{'User'} || 'clamav',
-            group => $options->{'MilterSocketGroup'} || 'clamav',
-            mode  => 0755
-        } );
+        # The socket directory is owned by the clamav-milter user (the socket
+        # itself is created by clamav-milter(8) with the MilterSocketGroup
+        # group and the MilterSocketMode mode). Symlinks are refused and the
+        # parent directory must be root-owned.
+        my $user = $options->{'User'} || 'clamav';
+        _secureDir( $socketDir, $user, ( getpwnam( $user ) )[3] // $user, 0755 );
     };
     if ( $@ ) {
         error( $@ );
@@ -700,6 +822,195 @@ sub _initClamAVdatabases
     }
 
     0;
+}
+
+=back
+
+=head1 FUNCTIONS (symlink-safe file operations)
+
+=over 4
+
+=item _ugid( $user, $group )
+
+ Resolve the given user and group (names or numeric IDs)
+
+ Return list (uid, gid), die on failure
+
+=cut
+
+sub _ugid
+{
+    my ($user, $group) = @_;
+
+    my $uid = $user =~ /^\d+$/ ? $user : getpwnam( $user );
+    my $gid = $group =~ /^\d+$/ ? $group : getgrnam( $group );
+    defined $uid or die( sprintf( 'Unknown user: %s', $user ));
+    defined $gid or die( sprintf( 'Unknown group: %s', $group ));
+    ( $uid, $gid );
+}
+
+=item _assertTrustedDir( $dir )
+
+ Make sure that no unprivileged user can replace any component of the given
+ directory path (and so redirect a write made by root)
+
+ Each path component must be owned by root. Ancestors must not be writable by
+ group/others unless the sticky bit is set (the next component being
+ root-owned, it can't be renamed/removed). The directory itself must not be
+ writable by group (unless group is root) or others.
+
+ Param string $dir Directory path
+ Return void, die if the directory isn't trusted
+
+=cut
+
+sub _assertTrustedDir
+{
+    my ($dir) = @_;
+
+    my $real = realpath( $dir );
+    defined $real && -d $real or die( sprintf( "Couldn't resolve the %s directory: %s", $dir, $! || 'not a directory' ));
+
+    my @components = grep { length } split m%/%, $real;
+    my $path = '';
+    for my $i ( -1 .. $#components ) {
+        $path .= $i < 0 ? '/' : ( $i ? '/' : '' ) . $components[$i];
+        my @st = lstat $path or die( sprintf( "Couldn't stat %s: %s", $path, $! ));
+        die( sprintf( 'Untrusted path %s: %s is not owned by root', $dir, $path )) if $st[4] != 0;
+
+        my $groupWritable = ( $st[2] & S_IWGRP ) && $st[5] != 0;
+        my $otherWritable = $st[2] & S_IWOTH;
+        next unless $groupWritable || $otherWritable;
+        next if $i < $#components && ( $st[2] & S_ISVTX );
+        die( sprintf( 'Untrusted path %s: %s is writable by non-root users', $dir, $path ));
+    }
+}
+
+=item _secureDir( $dir, $user, $group, $mode )
+
+ Create the given directory if needed, and set its ownership and permissions
+
+ The parent directory must be trusted (see _assertTrustedDir()). Symlinks are
+ refused. Ownership and permissions are set through a file descriptor opened
+ with O_NOFOLLOW (no TOCTOU race).
+
+ Param string $dir Directory path
+ Param string|int $user Owner (name or UID)
+ Param string|int $group Group (name or GID)
+ Param int $mode Mode
+ Return void, die on failure
+
+=cut
+
+sub _secureDir
+{
+    my ($dir, $user, $group, $mode) = @_;
+
+    my ($uid, $gid) = _ugid( $user, $group );
+    $dir =~ s%/+$%%;
+    my $parent = dirname( $dir );
+
+    unless ( -d $parent ) {
+        # Missing parents are created root:root 0755
+        iMSCP::Dir->new( dirname => $parent )->make( { user => 0, group => 0, mode => 0755 } );
+    }
+
+    _assertTrustedDir( $parent );
+
+    unless ( lstat $dir ) {
+        $!{'ENOENT'} or die( sprintf( "Couldn't stat %s: %s", $dir, $! ));
+        mkdir( $dir, 0700 ) or $!{'EEXIST'} or die( sprintf( "Couldn't create the %s directory: %s", $dir, $! ));
+        lstat $dir or die( sprintf( "Couldn't stat %s: %s", $dir, $! ));
+    }
+
+    die( sprintf( 'Refusing to process %s: symlink', $dir )) if -l _;
+    die( sprintf( 'Refusing to process %s: not a directory', $dir )) unless -d _;
+    my @lst = lstat _;
+
+    sysopen( my $fh, $dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW ) or die(
+        sprintf( "Couldn't open the %s directory: %s", $dir, $! )
+    );
+    my @st = stat $fh;
+    $st[0] == $lst[0] && $st[1] == $lst[1] && S_ISDIR( $st[2] ) or die( sprintf( '%s has been replaced. Aborting.', $dir ));
+    chown( $uid, $gid, $fh ) or die( sprintf( "Couldn't set ownership on %s: %s", $dir, $! ));
+    chmod( $mode, $fh ) or die( sprintf( "Couldn't set permissions on %s: %s", $dir, $! ));
+    close( $fh );
+}
+
+=item _secureFile( $file, $user, $group, $mode )
+
+ Set ownership and permissions of the given regular file
+
+ Symlinks and files with more than one hard link are refused. Ownership and
+ permissions are set through a file descriptor opened with O_NOFOLLOW.
+
+ Param string $file File path
+ Param string|int $user Owner (name or UID)
+ Param string|int $group Group (name or GID)
+ Param int $mode Mode
+ Return void, die on failure
+
+=cut
+
+sub _secureFile
+{
+    my ($file, $user, $group, $mode) = @_;
+
+    my ($uid, $gid) = _ugid( $user, $group );
+
+    sysopen( my $fh, $file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK ) or die(
+        sprintf( "Couldn't open %s: %s", $file, $! )
+    );
+    my @st = stat $fh;
+    S_ISREG( $st[2] ) or die( sprintf( 'Refusing to process %s: not a regular file', $file ));
+    $st[3] == 1 or die( sprintf( 'Refusing to process %s: file has several hard links', $file ));
+    chown( $uid, $gid, $fh ) or die( sprintf( "Couldn't set ownership on %s: %s", $file, $! ));
+    chmod( $mode, $fh ) or die( sprintf( "Couldn't set permissions on %s: %s", $file, $! ));
+    close( $fh );
+}
+
+=item _writeFileAtomic( $file, $content, $user, $group, $mode )
+
+ Write the given file atomically
+
+ The content is written into a temporary file (O_EXCL, random name) created
+ in the same, trusted, directory. Ownership and permissions are set through
+ the file descriptor, then the file is renamed. Whatever was at the target
+ path (including a symlink) is replaced, never followed.
+
+ Param string $file File path
+ Param string $content File content
+ Param string|int $user Owner (name or UID)
+ Param string|int $group Group (name or GID)
+ Param int $mode Mode
+ Return void, die on failure
+
+=cut
+
+sub _writeFileAtomic
+{
+    my ($file, $content, $user, $group, $mode) = @_;
+
+    my ($uid, $gid) = _ugid( $user, $group );
+    my $dir = dirname( $file );
+    _assertTrustedDir( $dir );
+
+    my $tmp = File::Temp->new( TEMPLATE => '.' . basename( $file ) . '.XXXXXXXX', DIR => $dir, UNLINK => 0 );
+    my $tmpName = $tmp->filename();
+    local $@;
+    eval {
+        binmode( $tmp );
+        print { $tmp } $content or die( sprintf( "Couldn't write %s: %s", $tmpName, $! ));
+        $tmp->flush() or die( sprintf( "Couldn't write %s: %s", $tmpName, $! ));
+        chown( $uid, $gid, $tmp ) or die( sprintf( "Couldn't set ownership on %s: %s", $tmpName, $! ));
+        chmod( $mode, $tmp ) or die( sprintf( "Couldn't set permissions on %s: %s", $tmpName, $! ));
+        $tmp->close() or die( sprintf( "Couldn't close %s: %s", $tmpName, $! ));
+        rename( $tmpName, $file ) or die( sprintf( "Couldn't rename %s to %s: %s", $tmpName, $file, $! ));
+    };
+    if ( my $err = $@ ) {
+        unlink( $tmpName );
+        die( $err );
+    }
 }
 
 =back

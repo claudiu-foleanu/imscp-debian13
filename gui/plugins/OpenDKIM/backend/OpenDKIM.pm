@@ -34,9 +34,13 @@ use iMSCP::Execute qw/ execute /;
 use iMSCP::File;
 use iMSCP::Service;
 use iMSCP::TemplateParser qw/ getBloc replaceBloc /;
-use iMSCP::Rights;
 use iMSCP::SystemUser;
 use Servers::mta;
+use Cwd qw/ realpath /;
+use Fcntl qw/ O_RDONLY O_NOFOLLOW O_NONBLOCK O_DIRECTORY S_ISDIR S_ISREG S_ISVTX S_IWGRP S_IWOTH /;
+use File::Basename qw/ basename dirname /;
+use File::Path qw/ remove_tree /;
+use File::Temp ();
 use Text::Balanced qw/ extract_multiple extract_delimited /;
 use version;
 use parent 'Common::SingletonClass';
@@ -73,6 +77,22 @@ my $DOMAIN_NAME_RE = qr/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)
     and cleanup(8) services are chrooted.
   - ADSP (RFC 5617) has been declared historic (RFC 8553 / IESG 2013) and
     is not supported by opendkim >= 2.10. ADSP DNS records are removed.
+
+ Security notes (ownership and permissions):
+  - This backend runs as root. The OpenDKIM configuration directory, the
+    keys/ directory, the per-domain key directories and the KeyTable,
+    SigningTable and TrustedHosts files are root-owned (root:opendkim
+    0750/0640) so that the opendkim user can read them but never plant
+    symlinks or hard links that root would follow.
+  - Private keys (keys/<domain>/mail.private) are owned by the opendkim user
+    with mode 0600. opendkim(8) only reads them. They cannot be group-readable
+    (root:opendkim 0640) because the Postfix user is a member of the opendkim
+    group (socket access) and RequireSafeKeys refuses keys that are readable
+    by another user through the group.
+  - Keys are generated in a private root-owned temporary directory and then
+    moved in place. Files are written atomically (temporary file + rename(2))
+    and ownership/permissions are only ever changed through file descriptors
+    opened with O_NOFOLLOW. Symlinks are refused.
 
 =head1 PUBLIC METHODS
 
@@ -169,15 +189,9 @@ sub change
 
     local $@;
     eval {
-        if ( -d "$self->{'config'}->{'opendkim_confdir'}/keys" ) {
-            debug( "Fixing permissions on $self->{'config'}->{'opendkim_confdir'}/keys directory" );
-            setRights( "$self->{'config'}->{'opendkim_confdir'}/keys", {
-                user      => $self->{'config'}->{'opendkim_user'},
-                group     => $self->{'config'}->{'opendkim_group'},
-                filemode  => '0600',
-                dirmode   => '0750',
-                recursive => 1
-            } ) == 0 or die( getMessageByType( 'error', { amount => 1, remove => 1 } ) || 'Unknown error' );
+        if ( -d $self->{'config'}->{'opendkim_confdir'} ) {
+            debug( "Fixing permissions on $self->{'config'}->{'opendkim_confdir'} directory" );
+            $self->_secureConfDir();
         }
 
         if ( $self->{'config'}->{'opendkim_dns_records_ttl'} ne ( $self->{'config_prev'}->{'opendkim_dns_records_ttl'} // '' ) ) {
@@ -317,6 +331,11 @@ sub run
         );
 
         return unless @{$rows};
+
+        # Make sure that the configuration directory is root-owned (also
+        # migrate installations made by older plugin versions, where the
+        # directory was owned by the opendkim user) before any write.
+        $self->_secureConfDir();
 
         for my $row ( @{$rows} ) {
             local $@;
@@ -505,24 +524,16 @@ sub _opendkimSetup
     my $c = $self->{'config'};
 
     if ( $action eq 'configure' ) {
-        for my $dir ( $c->{'opendkim_confdir'}, "$c->{'opendkim_confdir'}/keys" ) {
-            debug( "Creating $dir directory" );
-            iMSCP::Dir->new( dirname => $dir )->make( {
-                user           => $c->{'opendkim_user'},
-                group          => $c->{'opendkim_group'},
-                mode           => 0750,
-                fixpermissions => 1
-            } );
-        }
+        debug( "Creating/Securing $c->{'opendkim_confdir'} directory" );
+        $self->_secureConfDir();
 
         if ( my $socketDir = $self->_getSocketDir( $c->{'opendkim_socket'} ) ) {
+            # The socket directory must be writable by the opendkim user (the
+            # socket is created by opendkim(8) after dropping privileges). Its
+            # parent directory must be root-owned so that the opendkim user
+            # can't replace the directory with a symlink.
             debug( "Creating $socketDir OpenDKIM socket directory" );
-            iMSCP::Dir->new( dirname => $socketDir )->make( {
-                user           => $c->{'opendkim_user'},
-                group          => $c->{'opendkim_group'},
-                mode           => 0750,
-                fixpermissions => 1
-            } );
+            _secureDir( $socketDir, $c->{'opendkim_user'}, $c->{'opendkim_group'}, 0750 );
         }
 
         # (Re)build the TrustedHosts file
@@ -791,33 +802,39 @@ sub _addDomain
         $self->_deleteDomainDnsRecord( $data );
     }
 
-    debug( "Creating OpenDKIM key directory for the $domain domain" );
-    iMSCP::Dir->new( dirname => $keyDir )->make( {
-        user           => $c->{'opendkim_user'},
-        group          => $c->{'opendkim_group'},
-        mode           => 0750,
-        fixpermissions => 1
-    } );
-
     my ($genkey) = grep { -x } @GENKEY_PATHS;
     defined $genkey or die( "Couldn't find the opendkim-genkey program. Is the opendkim-tools package installed?" );
 
-    debug( "Generating DKIM key for the $domain domain" );
-    # List form: no shell involved
-    my $stderr;
-    execute(
-        [ $genkey, '-b', $c->{'opendkim_keysize'}, '-h', 'sha256', '-r', '-s', 'mail', '-d', $domain, '-D', $keyDir ],
-        \my $stdout, \$stderr
-    ) == 0 or die ( $stderr || 'Unknown error' );
-    debug( $stdout ) if $stdout;
+    debug( "Creating OpenDKIM key directory for the $domain domain" );
+    _secureDir( $keyDir, 0, $c->{'opendkim_group'}, 0750 );
 
-    for ( [ "$keyDir/mail.private", 0600 ], [ "$keyDir/mail.txt", 0640 ] ) {
-        my $file = iMSCP::File->new( filename => $_->[0] );
-        $file->owner( $c->{'opendkim_user'}, $c->{'opendkim_group'} ) == 0 or die(
-            getMessageByType( 'error', { amount => 1, remove => 1 } ) || 'Unknown error'
-        );
-        $file->mode( $_->[1] ) == 0 or die( getMessageByType( 'error', { amount => 1, remove => 1 } ) || 'Unknown error' );
-    }
+    # Generate the key in a private root-owned temporary directory (never
+    # inside a directory writable by the opendkim user), then move it in place
+    my $tmpDir = File::Temp::tempdir( '.genkey-XXXXXXXX', DIR => $c->{'opendkim_confdir'}, CLEANUP => 0 );
+    local $@;
+    eval {
+        debug( "Generating DKIM key for the $domain domain" );
+        # List form: no shell involved
+        my $stderr;
+        execute(
+            [ $genkey, '-b', $c->{'opendkim_keysize'}, '-h', 'sha256', '-r', '-s', 'mail', '-d', $domain, '-D', $tmpDir ],
+            \my $stdout, \$stderr
+        ) == 0 or die ( $stderr || 'Unknown error' );
+        debug( $stdout ) if $stdout;
+
+        # The private key is read by opendkim(8) (as the opendkim user). It
+        # must not be group-readable (see RequireSafeKeys). The TXT record
+        # file is only read by this backend.
+        _secureFile( "$tmpDir/mail.private", $c->{'opendkim_user'}, $c->{'opendkim_group'}, 0600 );
+        _secureFile( "$tmpDir/mail.txt", 0, $c->{'opendkim_group'}, 0640 );
+
+        for ( qw/ mail.txt mail.private / ) {
+            rename( "$tmpDir/$_", "$keyDir/$_" ) or die( sprintf( "Couldn't move %s to %s: %s", "$tmpDir/$_", "$keyDir/$_", $! ));
+        }
+    };
+    my $err = $@;
+    remove_tree( $tmpDir );
+    die( $err ) if $err;
 
     $self->_addDomainSigningEntry( $domain );
     $self->_addDomainKeyEntry( $domain );
@@ -1051,7 +1068,12 @@ sub _rebuildSigningTables
     )};
 
     for my $domainName ( iMSCP::Dir->new( dirname => "$confdir/keys" )->getDirs() ) {
-        if ( $domainNames{lc $domainName} && $domainName =~ $DOMAIN_NAME_RE && -f "$confdir/keys/$domainName/mail.private" ) {
+        # Never follow symlinks (see _secureConfDir())
+        next if -l "$confdir/keys/$domainName";
+
+        if ( $domainNames{lc $domainName} && $domainName =~ $DOMAIN_NAME_RE
+            && !-l "$confdir/keys/$domainName/mail.private" && -f _
+        ) {
             $self->_addDomainSigningEntry( $domainName );
             $self->_addDomainKeyEntry( $domainName );
             next;
@@ -1154,7 +1176,11 @@ sub _reloadOpendkim
 
 =item _saveFile( $file, $mode )
 
- Save the given OpenDKIM file with OpenDKIM ownership and the given mode
+ Save the given OpenDKIM file (root:<opendkim_group>, given mode)
+
+ The file is written atomically (temporary file in the same root-owned
+ directory, then rename(2)). A symlink planted in place of the file is
+ replaced, never followed.
 
  Param iMSCP::File $file
  Param int $mode File mode
@@ -1166,11 +1192,254 @@ sub _saveFile
 {
     my ($self, $file, $mode) = @_;
 
-    $file->save() == 0 or die( getMessageByType( 'error', { amount => 1, remove => 1 } ) || 'Unknown error' );
-    $file->owner( $self->{'config'}->{'opendkim_user'}, $self->{'config'}->{'opendkim_group'} ) == 0 or die(
-        getMessageByType( 'error', { amount => 1, remove => 1 } ) || 'Unknown error'
+    _writeFileAtomic( $file->{'filename'}, $file->{'fileContent'} // '', 0, $self->{'config'}->{'opendkim_group'}, $mode );
+}
+
+=item _secureConfDir( )
+
+ Create/secure the OpenDKIM configuration directory and the keys directory
+
+ Ownership and permissions are (re)set as follows:
+  <confdir>                        root:<opendkim_group>          0750
+  <confdir>/keys                   root:<opendkim_group>          0750
+  <confdir>/keys/<domain>          root:<opendkim_group>          0750
+  <confdir>/keys/<domain>/mail.private  <opendkim_user>:<opendkim_group> 0600
+  <confdir>/keys/<domain>/mail.txt root:<opendkim_group>          0640
+  <confdir>/{KeyTable,SigningTable,TrustedHosts} root:<opendkim_group> 0640
+
+ Older plugin versions made those directories owned by the opendkim user. The
+ directories are secured top-down, so that once a directory is root-owned,
+ the opendkim user can no longer plant entries in it. Symlinks are refused.
+
+ Return void, die on failure
+
+=cut
+
+sub _secureConfDir
+{
+    my ($self) = @_;
+
+    my $c = $self->{'config'};
+    my $confdir = $c->{'opendkim_confdir'};
+    $confdir =~ m%^/% or die( "The `opendkim_confdir' parameter must be an absolute path" );
+
+    _secureDir( $confdir, 0, $c->{'opendkim_group'}, 0750 );
+    _secureDir( "$confdir/keys", 0, $c->{'opendkim_group'}, 0750 );
+
+    for my $entry ( qw/ KeyTable SigningTable TrustedHosts / ) {
+        next unless lstat "$confdir/$entry";
+        die( sprintf( 'Refusing to process %s: not a regular file (symlink?)', "$confdir/$entry" )) unless -f _;
+        _secureFile( "$confdir/$entry", 0, $c->{'opendkim_group'}, 0640 );
+    }
+
+    opendir( my $dh, "$confdir/keys" ) or die( sprintf( "Couldn't open the %s directory: %s", "$confdir/keys", $! ));
+    my @entries = grep { !/^\.{1,2}\z/s } readdir( $dh );
+    closedir( $dh );
+
+    for my $entry ( @entries ) {
+        my $path = "$confdir/keys/$entry";
+        lstat $path or next;
+        die( sprintf( 'Refusing to process %s: symlink', $path )) if -l _;
+        next unless -d _;
+
+        _secureDir( $path, 0, $c->{'opendkim_group'}, 0750 );
+
+        for ( [ 'mail.private', $c->{'opendkim_user'}, 0600 ], [ 'mail.txt', 0, 0640 ] ) {
+            my $file = "$path/$_->[0]";
+            lstat $file or next;
+            die( sprintf( 'Refusing to process %s: not a regular file (symlink?)', $file )) unless -f _ && !-l _;
+            _secureFile( $file, $_->[1], $c->{'opendkim_group'}, $_->[2] );
+        }
+    }
+}
+
+=back
+
+=head1 FUNCTIONS (symlink-safe file operations)
+
+=over 4
+
+=item _ugid( $user, $group )
+
+ Resolve the given user and group (names or numeric IDs)
+
+ Return list (uid, gid), die on failure
+
+=cut
+
+sub _ugid
+{
+    my ($user, $group) = @_;
+
+    my $uid = $user =~ /^\d+$/ ? $user : getpwnam( $user );
+    my $gid = $group =~ /^\d+$/ ? $group : getgrnam( $group );
+    defined $uid or die( sprintf( 'Unknown user: %s', $user ));
+    defined $gid or die( sprintf( 'Unknown group: %s', $group ));
+    ( $uid, $gid );
+}
+
+=item _assertTrustedDir( $dir )
+
+ Make sure that no unprivileged user can replace any component of the given
+ directory path (and so redirect a write made by root)
+
+ Each path component must be owned by root. Ancestors must not be writable by
+ group/others unless the sticky bit is set (the next component being
+ root-owned, it can't be renamed/removed). The directory itself must not be
+ writable by group (unless group is root) or others.
+
+ Param string $dir Directory path
+ Return void, die if the directory isn't trusted
+
+=cut
+
+sub _assertTrustedDir
+{
+    my ($dir) = @_;
+
+    my $real = realpath( $dir );
+    defined $real && -d $real or die( sprintf( "Couldn't resolve the %s directory: %s", $dir, $! || 'not a directory' ));
+
+    my @components = grep { length } split m%/%, $real;
+    my $path = '';
+    for my $i ( -1 .. $#components ) {
+        $path .= $i < 0 ? '/' : ( $i ? '/' : '' ) . $components[$i];
+        my @st = lstat $path or die( sprintf( "Couldn't stat %s: %s", $path, $! ));
+        die( sprintf( 'Untrusted path %s: %s is not owned by root', $dir, $path )) if $st[4] != 0;
+
+        my $groupWritable = ( $st[2] & S_IWGRP ) && $st[5] != 0;
+        my $otherWritable = $st[2] & S_IWOTH;
+        next unless $groupWritable || $otherWritable;
+        next if $i < $#components && ( $st[2] & S_ISVTX );
+        die( sprintf( 'Untrusted path %s: %s is writable by non-root users', $dir, $path ));
+    }
+}
+
+=item _secureDir( $dir, $user, $group, $mode )
+
+ Create the given directory if needed, and set its ownership and permissions
+
+ The parent directory must be trusted (see _assertTrustedDir()). Symlinks are
+ refused. Ownership and permissions are set through a file descriptor opened
+ with O_NOFOLLOW (no TOCTOU race).
+
+ Param string $dir Directory path
+ Param string|int $user Owner (name or UID)
+ Param string|int $group Group (name or GID)
+ Param int $mode Mode
+ Return void, die on failure
+
+=cut
+
+sub _secureDir
+{
+    my ($dir, $user, $group, $mode) = @_;
+
+    my ($uid, $gid) = _ugid( $user, $group );
+    $dir =~ s%/+$%%;
+    my $parent = dirname( $dir );
+
+    unless ( -d $parent ) {
+        # Missing parents are created root:root 0755
+        iMSCP::Dir->new( dirname => $parent )->make( { user => 0, group => 0, mode => 0755 } );
+    }
+
+    _assertTrustedDir( $parent );
+
+    unless ( lstat $dir ) {
+        $!{'ENOENT'} or die( sprintf( "Couldn't stat %s: %s", $dir, $! ));
+        mkdir( $dir, 0700 ) or $!{'EEXIST'} or die( sprintf( "Couldn't create the %s directory: %s", $dir, $! ));
+        lstat $dir or die( sprintf( "Couldn't stat %s: %s", $dir, $! ));
+    }
+
+    die( sprintf( 'Refusing to process %s: symlink', $dir )) if -l _;
+    die( sprintf( 'Refusing to process %s: not a directory', $dir )) unless -d _;
+    my @lst = lstat _;
+
+    sysopen( my $fh, $dir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW ) or die(
+        sprintf( "Couldn't open the %s directory: %s", $dir, $! )
     );
-    $file->mode( $mode ) == 0 or die( getMessageByType( 'error', { amount => 1, remove => 1 } ) || 'Unknown error' );
+    my @st = stat $fh;
+    $st[0] == $lst[0] && $st[1] == $lst[1] && S_ISDIR( $st[2] ) or die( sprintf( '%s has been replaced. Aborting.', $dir ));
+    chown( $uid, $gid, $fh ) or die( sprintf( "Couldn't set ownership on %s: %s", $dir, $! ));
+    chmod( $mode, $fh ) or die( sprintf( "Couldn't set permissions on %s: %s", $dir, $! ));
+    close( $fh );
+}
+
+=item _secureFile( $file, $user, $group, $mode )
+
+ Set ownership and permissions of the given regular file
+
+ Symlinks and files with more than one hard link are refused. Ownership and
+ permissions are set through a file descriptor opened with O_NOFOLLOW.
+
+ Param string $file File path
+ Param string|int $user Owner (name or UID)
+ Param string|int $group Group (name or GID)
+ Param int $mode Mode
+ Return void, die on failure
+
+=cut
+
+sub _secureFile
+{
+    my ($file, $user, $group, $mode) = @_;
+
+    my ($uid, $gid) = _ugid( $user, $group );
+
+    sysopen( my $fh, $file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK ) or die(
+        sprintf( "Couldn't open %s: %s", $file, $! )
+    );
+    my @st = stat $fh;
+    S_ISREG( $st[2] ) or die( sprintf( 'Refusing to process %s: not a regular file', $file ));
+    $st[3] == 1 or die( sprintf( 'Refusing to process %s: file has several hard links', $file ));
+    chown( $uid, $gid, $fh ) or die( sprintf( "Couldn't set ownership on %s: %s", $file, $! ));
+    chmod( $mode, $fh ) or die( sprintf( "Couldn't set permissions on %s: %s", $file, $! ));
+    close( $fh );
+}
+
+=item _writeFileAtomic( $file, $content, $user, $group, $mode )
+
+ Write the given file atomically
+
+ The content is written into a temporary file (O_EXCL, random name) created
+ in the same, trusted, directory. Ownership and permissions are set through
+ the file descriptor, then the file is renamed. Whatever was at the target
+ path (including a symlink) is replaced, never followed.
+
+ Param string $file File path
+ Param string $content File content
+ Param string|int $user Owner (name or UID)
+ Param string|int $group Group (name or GID)
+ Param int $mode Mode
+ Return void, die on failure
+
+=cut
+
+sub _writeFileAtomic
+{
+    my ($file, $content, $user, $group, $mode) = @_;
+
+    my ($uid, $gid) = _ugid( $user, $group );
+    my $dir = dirname( $file );
+    _assertTrustedDir( $dir );
+
+    my $tmp = File::Temp->new( TEMPLATE => '.' . basename( $file ) . '.XXXXXXXX', DIR => $dir, UNLINK => 0 );
+    my $tmpName = $tmp->filename();
+    local $@;
+    eval {
+        binmode( $tmp );
+        print { $tmp } $content or die( sprintf( "Couldn't write %s: %s", $tmpName, $! ));
+        $tmp->flush() or die( sprintf( "Couldn't write %s: %s", $tmpName, $! ));
+        chown( $uid, $gid, $tmp ) or die( sprintf( "Couldn't set ownership on %s: %s", $tmpName, $! ));
+        chmod( $mode, $tmp ) or die( sprintf( "Couldn't set permissions on %s: %s", $tmpName, $! ));
+        $tmp->close() or die( sprintf( "Couldn't close %s: %s", $tmpName, $! ));
+        rename( $tmpName, $file ) or die( sprintf( "Couldn't rename %s to %s: %s", $tmpName, $file, $! ));
+    };
+    if ( my $err = $@ ) {
+        unlink( $tmpName );
+        die( $err );
+    }
 }
 
 =back

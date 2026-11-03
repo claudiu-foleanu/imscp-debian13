@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "a4fad3307793d96b0e9c37faeb361483",
+    "content-hash": "24c8789b67308ccbdf9074d84beae616",
     "packages": [
         {
             "name": "algo26-matthias/idna-convert",
@@ -135,11 +135,11 @@
         },
         {
             "name": "imscp/composer-installers",
-            "version": "1.1.0",
+            "version": "1.1.1",
             "dist": {
                 "type": "path",
                 "url": "composer/imscp-composer-installers",
-                "reference": "5e2831d6119f4522a44a5eea4e433323b88ded10"
+                "reference": "6b62eff148dfa2b897b1a2a3ab4dd74cad7ca867"
             },
             "require": {
                 "composer-plugin-api": "^1.1 || ^2.0",

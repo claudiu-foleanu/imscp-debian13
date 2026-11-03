@@ -677,6 +677,14 @@ sub _buildConf
                 my $ssl = ::setupGetQuestion( 'SERVICES_SSL_ENABLED' );
                 $cfgTpl .= "\nssl = $ssl\n";
 
+                # Security: when SSL is enabled, don't allow plaintext
+                # authentication over unencrypted connections (IMAP 143 and
+                # POP3 110 still work through STARTTLS)
+                if ( $ssl eq 'yes' ) {
+                    $cfgTpl =~ s/^(auth_allow_cleartext\s*=\s*)yes\s*$/${1}no/m;
+                    $cfgTpl =~ s/^(disable_plaintext_auth\s*=\s*)no\s*$/${1}yes/m;
+                }
+
                 if ( $ssl eq 'yes' && $isDovecot24 ) {
                     # Dovecot >= 2.4: ssl_cert/ssl_key settings were renamed
                     # and the ssl_protocols setting was removed

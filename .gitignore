@@ -9,3 +9,7 @@ nbproject
 /Vagrantfile
 .DS_Store
 _Deparsed_XSubs.pm
+
+# Build artefacts (i-MSCP daemon)
+daemon/*.o
+daemon/imscp_daemon

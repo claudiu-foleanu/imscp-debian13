@@ -57,7 +57,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        $error = 'Login failed. Please check your FTP username and password, or try again later.';
+        if (($retryAfter = $app->getRetryAfter()) > 0) {
+            http_response_code(429);
+            header('Retry-After: ' . $retryAfter);
+            $error = 'Too many failed login attempts. Please try again later.';
+        } else {
+            $error = 'Login failed. Please check your FTP username and password, or try again later.';
+        }
     } elseif ($action === 'logout') {
         $app->logout();
         header('Location: ' . $basePath, true, 303);

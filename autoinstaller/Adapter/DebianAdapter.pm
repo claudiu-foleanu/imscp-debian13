@@ -1395,6 +1395,19 @@ sub _processPackagesFile
                 pinning_pin          => $data->{'pinning_pin'},
                 pinning_pin_priority => $data->{'pinning_pin_priority'},
             };
+
+            # Optional priority for all other packages from the same origin
+            # (must come after the more specific entry as APT makes use of
+            # the first matching entry). This makes it possible to prevent a
+            # third-party repository from overriding unrelated distribution
+            # packages.
+            if ( defined $data->{'pinning_fallback_priority'} ) {
+                push @{ $self->{'_dist'}->{'aptPreferences'} }, {
+                    pinning_package      => '*',
+                    pinning_pin          => $data->{'pinning_pin'},
+                    pinning_pin_priority => $data->{'pinning_fallback_priority'},
+                };
+            }
         }
 
         # Conflicting APT repositories to remove
@@ -1407,6 +1420,7 @@ sub _processPackagesFile
         delete @{ $data }{
             qw/ package package_delayed package_conflict
                 pinning_package pinning_pin pinning_pin_priority
+                pinning_fallback_priority
                 repository repository_key_uri repository_key_id
                 repository_key_srv fallback_repository
                 fallback_repository_key_uri fallback_repository_key_id

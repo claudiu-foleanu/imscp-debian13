@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.1
+
+- Security: all operations made in the control panel directory tree (owned
+  by the control panel user) are now made with the privileges of that user
+  (no more symlink following as root). Configuration files are written
+  atomically (O_EXCL|O_NOFOLLOW temporary file + rename); symlinks are refused.
+- Security: the upstream archive is verified and extracted from a private
+  root-owned temporary directory (the cache is no longer used in place);
+  archive members are checked (no absolute path, no '..', no symlink pointing
+  outside, no special file, no setuid/setgid bits).
+- Security: the Nginx configuration snippet is embedded in the handler and
+  installed as root:root 0644 (no longer rendered from the package directory).
+- Security: login brute-force protection no longer delays requests (which
+  could tie up all control panel PHP-FPM workers). Failures are counted per
+  client IP address and per username; once a limit is reached, login attempts
+  are rejected immediately with HTTP 429 and a Retry-After header. The FTP
+  connection made to check credentials uses a 5 seconds timeout.
+
 ## 1.1.0
 
 - First release. Replaces the MonstaFTP Web-based FTP client (MonstaFTP

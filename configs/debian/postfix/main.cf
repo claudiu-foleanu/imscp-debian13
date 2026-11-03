@@ -10,7 +10,10 @@ smtp_bind_address6 = {MTA_SMTP_BIND_ADDRESS6}
 myhostname = {MTA_HOSTNAME}
 mydomain = {MTA_LOCAL_DOMAIN}
 myorigin = $myhostname
-smtpd_banner = $myhostname ESMTP i-MSCP {MTA_VERSION} Managed
+smtpd_banner = $myhostname ESMTP
+# Security: no address verification/enumeration through VRFY
+disable_vrfy_command = yes
+show_user_unknown_table_name = no
 append_dot_mydomain = no
 append_at_myorigin = yes
 biff = no

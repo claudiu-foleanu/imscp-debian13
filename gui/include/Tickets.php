@@ -505,7 +505,7 @@ function changeTicketStatus($ticketId, $ticketStatus)
         '
             UPDATE tickets
             SET ticket_status = ?
-            WHERE ticket_id = ? OR ticket_reply = ?
+            WHERE (ticket_id = ? OR ticket_reply = ?)
             AND (ticket_from = ? OR ticket_to = ?)
         ',
         [

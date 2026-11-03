@@ -21,7 +21,7 @@
 
     <Directory "{USER_WEB_DIR}/domain_disabled_pages">
         AllowOverride None
-        Options FollowSymLinks 
+        Options SymLinksIfOwnerMatch 
         Require all granted
     </Directory>
 

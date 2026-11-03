@@ -52,10 +52,16 @@ return array(
         //  - {SPAMD_GROUP}: Replaced by SPAMD(8p) unix user group
         //  - {SPAMD_HOMEDIR}: Replaced by SPAMD(8p) unix user homedir
         //
+        // Security note: the SPAMD(8p) UNIX socket is only accessible to the
+        // `spamass-milter' group (SPAMC(1) is run by SPAMASS_MILTER(8) as the
+        // `spamass-milter' user). Don't make it world-accessible (0666): any
+        // local user could then use spamd. If other local programs need to run
+        // SPAMC(1), add their user to the `spamass-milter' group.
+        //
         // Possible value: string
         'options' => '--max-children=5 --sql-config --nouser-config --username={SPAMD_USER} --groupname={SPAMD_GROUP}'
             . ' --helper-home-dir={SPAMD_HOMEDIR} --socketpath=/run/spamassassin.sock --socketowner={SPAMD_USER}'
-            . ' --socketgroup={SPAMD_GROUP} --socketmode=0666'
+            . ' --socketgroup=spamass-milter --socketmode=0660'
     ),
 
     // SPAMASS_MILTER(8) service configuration
@@ -125,8 +131,11 @@ return array(
 
         // SPAMASS_MILTER(8) socket mode
         //
+        // Only the Postfix user/group (socket_owner) needs to connect to the
+        // socket. Don't make it world-accessible (0666).
+        //
         // Possible value: string
-        'socket_mode'             => '0666',
+        'socket_mode'             => '0660',
 
         // Postfix per-milter default action, applied when the SPAMASS_MILTER(8)
         // milter is unavailable.
@@ -296,11 +305,19 @@ return array(
             'config_file' => '/etc/spamassassin/v400.pre'
         ),
 
-        // Heinlein Support SpamAssassin ruleset
+        // Heinlein Support SpamAssassin ruleset (opt-in)
         // See https://www.heinlein-support.de/blog/news/aktuelle-spamassassin-regeln-von-heinlein-support/
+        //
+        // WARNING: Heinlein Support doesn't publish the fingerprint of the GPG
+        // key used to sign the channel updates (their documentation recommends
+        // --nogpg). Without the gpg_key parameter below, the updates are
+        // installed hourly WITHOUT signature verification (sa-update --nogpg):
+        // the rules are only protected by DNS and TLS. Malicious rules could
+        // reject or let through any mail. Only enable this ruleset if you
+        // accept that risk, or set the gpg_key parameter.
         'heinlein_support_ruleset' => array(
             // Possible value: true, false
-            'enabled'     => true,
+            'enabled'     => false,
 
             // Cronjob sleep timer (in seconds)
             // Possible value: integer
@@ -309,7 +326,17 @@ return array(
             // sa-update channel
             //
             // Possible value: string
-            'channel'     => 'spamassassin.heinlein-support.de'
+            'channel'     => 'spamassassin.heinlein-support.de',
+            // Full fingerprint (40 hexadecimal characters) of the GPG key used
+            // to sign the channel updates (sa-update --gpgkey), or empty for
+            // no signature verification (sa-update --nogpg)
+            //
+            // The key must be imported beforehand, after having verified its
+            // fingerprint through a trusted channel:
+            //  runuser -u debian-spamd -- sa-update --gpghomedir /var/lib/spamassassin/sa-update-keys --import <keyfile>
+            //
+            // Possible value: string
+            'gpg_key'     => ''
         ),
 
         // iXhash2 SpamAssassin plugin - perform iXhash2 check of messages

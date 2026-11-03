@@ -45,6 +45,9 @@ final class App
     /** @var string Base URL path (with trailing slash) */
     private $basePath;
 
+    /** @var int Seconds after which a rate-limited client may retry (0 if not rate-limited) */
+    private $retryAfter = 0;
+
     /**
      * Constructor
      *
@@ -57,11 +60,13 @@ final class App
                 'ftp_port'           => 21,
                 'ftp_ssl'            => false,
                 'ftp_timeout'        => 15,
+                'ftp_login_timeout'  => 5,
                 'tmp_dir'            => '',
                 'secret_key'         => '',
                 'idle_timeout'       => 1800,
                 'max_lifetime'       => 28800,
                 'max_login_failures' => 10,
+                'max_user_login_failures' => 10,
                 'login_window'       => 900,
                 'upload_max_size'    => '128M',
                 'timezone'           => 'UTC'
@@ -256,35 +261,53 @@ final class App
     /**
      * Process login
      *
+     * Failed logins are counted per client IP address and per username. Once
+     * a limit is reached, further login attempts are rejected immediately (no
+     * FTP connection, no delay) until the time window expires; see
+     * getRetryAfter(). The request is never delayed in-process as this would
+     * tie up the (few) control panel PHP-FPM workers.
+     *
      * @param mixed $username
      * @param mixed $password
      * @return bool TRUE on success, FALSE on failure
      */
     public function login($username, $password): bool
     {
-        // Per-session delay (in addition to the per-IP rate limit)
-        $sessionFailures = (int)($_SESSION['login_failures'] ?? 0);
+        $this->retryAfter = 0;
 
-        if (!$this->checkRateLimit()) {
-            sleep(min(2 + $sessionFailures, 10));
-            return false;
-        }
-
-        $ok = is_string($username) && is_string($password)
+        $valid = is_string($username) && is_string($password)
             && strlen($username) > 0 && strlen($username) <= 255
             && strlen($password) > 0 && strlen($password) <= 1024
             // No control characters (would allow FTP command injection)
-            && !preg_match('/[\x00-\x1f\x7f]/', $username . $password)
-            && $this->checkFtpCredentials($username, $password);
+            && !preg_match('/[\x00-\x1f\x7f]/', $username . $password);
 
-        if (!$ok) {
-            $this->registerLoginFailure();
-            $_SESSION['login_failures'] = $sessionFailures + 1;
-            sleep(min(2 + $sessionFailures, 10));
+        $ipFile = $this->getRateLimitFile('ip:' . $this->getClientIp());
+        $userFile = $valid ? $this->getRateLimitFile('user:' . strtolower($username)) : NULL;
+
+        $retryAfter = $this->checkRateLimit($ipFile, (int)$this->config['max_login_failures']);
+        if (NULL !== $userFile) {
+            $retryAfter = max(
+                $retryAfter, $this->checkRateLimit($userFile, (int)$this->config['max_user_login_failures'])
+            );
+        }
+
+        if ($retryAfter > 0) {
+            $this->retryAfter = $retryAfter;
             return false;
         }
 
-        $this->resetRateLimit();
+        if (!$valid || !$this->checkFtpCredentials($username, $password)) {
+            $this->registerLoginFailure($ipFile);
+            if (NULL !== $userFile) {
+                $this->registerLoginFailure($userFile);
+            }
+
+            return false;
+        }
+
+        // The per-IP counter is not reset on success: a valid account must not
+        // allow to reset the counter while guessing passwords of other accounts
+        $this->resetRateLimit($userFile);
         session_regenerate_id(true);
 
         $now = time();
@@ -303,6 +326,17 @@ final class App
 
         $this->cleanupStaleWorkDirs();
         return true;
+    }
+
+    /**
+     * Get the number of seconds after which a client rejected by the login
+     * rate limiter may retry
+     *
+     * @return int Number of seconds, 0 if the last login attempt was not rate-limited
+     */
+    public function getRetryAfter(): int
+    {
+        return $this->retryAfter;
     }
 
     /**
@@ -341,9 +375,11 @@ final class App
      */
     private function checkFtpCredentials(string $username, string $password): bool
     {
+        // Short timeout: the PHP-FPM worker is blocked meanwhile
+        $timeout = min(max((int)$this->config['ftp_login_timeout'], 1), 10);
         $conn = $this->config['ftp_ssl']
-            ? @ftp_ssl_connect($this->config['ftp_host'], (int)$this->config['ftp_port'], (int)$this->config['ftp_timeout'])
-            : @ftp_connect($this->config['ftp_host'], (int)$this->config['ftp_port'], (int)$this->config['ftp_timeout']);
+            ? @ftp_ssl_connect($this->config['ftp_host'], (int)$this->config['ftp_port'], $timeout)
+            : @ftp_connect($this->config['ftp_host'], (int)$this->config['ftp_port'], $timeout);
 
         if ($conn === false) {
             error_log('i-MSCP elFinder: Could not connect to the FTP server');
@@ -385,24 +421,25 @@ final class App
     }
 
     /**
-     * Get rate limit file path for the client IP address
+     * Get rate limit file path for the given key (client IP address or username)
      *
+     * @param string $key
      * @return string
      */
-    private function getRateLimitFile(): string
+    private function getRateLimitFile(string $key): string
     {
-        return $this->getPrivateDir('ratelimit') . '/' . hash_hmac('sha256', $this->getClientIp(), $this->config['secret_key']);
+        return $this->getPrivateDir('ratelimit') . '/' . hash_hmac('sha256', $key, $this->config['secret_key']);
     }
 
     /**
-     * Read and update rate limit data for the client IP address
+     * Read and update rate limit data
      *
+     * @param string $file Rate limit file
      * @param callable $callback Callback receiving and returning the data
      * @return array Data
      */
-    private function rateLimitData(callable $callback): array
+    private function rateLimitData(string $file, callable $callback): array
     {
-        $file = $this->getRateLimitFile();
         $fh = @fopen($file, 'c+');
         if ($fh === false) {
             return $callback(['failures' => 0, 'first' => time()]);
@@ -428,40 +465,50 @@ final class App
     }
 
     /**
-     * Whether the client IP address is allowed to try to login
+     * Check the rate limit for the given rate limit file
      *
-     * @return bool
+     * @param string $file Rate limit file
+     * @param int $maxFailures Maximum number of failures in the time window
+     * @return int 0 if login attempts are allowed, else number of seconds to wait
      */
-    private function checkRateLimit(): bool
+    private function checkRateLimit(string $file, int $maxFailures): int
     {
-        $data = $this->rateLimitData(function (array $data) {
+        $data = $this->rateLimitData($file, function (array $data) {
             return $data;
         });
 
-        return (int)$data['failures'] < (int)$this->config['max_login_failures'];
+        if ((int)$data['failures'] < $maxFailures) {
+            return 0;
+        }
+
+        return max(1, (int)$this->config['login_window'] - (time() - (int)$data['first']));
     }
 
     /**
-     * Register a login failure for the client IP address
+     * Register a login failure
      *
+     * @param string $file Rate limit file
      * @return void
      */
-    private function registerLoginFailure()
+    private function registerLoginFailure(string $file)
     {
-        $this->rateLimitData(function (array $data) {
+        $this->rateLimitData($file, function (array $data) {
             $data['failures'] = (int)$data['failures'] + 1;
             return $data;
         });
     }
 
     /**
-     * Reset login failures for the client IP address
+     * Reset login failures
      *
+     * @param string|null $file Rate limit file
      * @return void
      */
-    private function resetRateLimit()
+    private function resetRateLimit($file)
     {
-        @unlink($this->getRateLimitFile());
+        if (NULL !== $file) {
+            @unlink($file);
+        }
     }
 
     /**
