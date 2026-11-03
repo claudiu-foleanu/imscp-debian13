@@ -43,6 +43,18 @@ DEBIAN 13 (TRIXIE) SUPPORT
            ports were never accounted ('defined or next' tested $_ instead of
            the port) (imscp-net-traffic-logger)
     Fixed: imscp-srv-traff always exited with status 1 on success
+    Fixed: Courier: courier-authlib >= 0.72 ignores authmysqlrc files without
+           the MARKER section (all IMAP/POP/SMTP logins failed)
+    Fixed: Courier: STARTTLS (IMAP 143, POP3 110) failed as couriertls runs as
+           the courier user; use a private copy of the services certificate
+           and fix DH parameters file ownership
+    Fixed: Courier: Cyrus SASL >= 2.1.28 (Debian >= 12) no longer reads
+           /etc/postfix/sasl; set cyrus_sasl_config_path and make smtpd.conf
+           readable by the postfix user (SMTP AUTH failed)
+    Fixed: VsFTPD: SQL user was never set on fresh installation (copy-paste
+           error), making the VsFTPD server unusable
+    Fixed: Postfix >= 3.6: compatibility_level set to 3.6 (backwards-compatible
+           default settings warnings)
 
 WEB ADD-ONS (the i-MSCP GitHub repositories of the add-on packages are gone)
     Rewritten: Roundcube and phpMyAdmin integration packages are now bundled

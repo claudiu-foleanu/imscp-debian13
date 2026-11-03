@@ -190,6 +190,14 @@ sub _uninstall
             return $rs if $rs;
         }
 
+        # Remove the private copy of the services SSL certificate
+        if ( -f "$self->{'config'}->{'AUTHLIB_CONF_DIR'}/imscp_services.pem" ) {
+            $rs = iMSCP::File->new(
+                filename => "$self->{'config'}->{'AUTHLIB_CONF_DIR'}/imscp_services.pem"
+            )->delFile();
+            return $rs if $rs;
+        }
+
         # Remove the systemd-tmpfiles file
         if ( -f '/etc/tmpfiles.d/courier-authdaemon.conf' ) {
             $rs = iMSCP::File->new(

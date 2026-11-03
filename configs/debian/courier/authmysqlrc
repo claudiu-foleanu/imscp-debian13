@@ -17,3 +17,9 @@ MYSQL_NAME_FIELD        mail_addr
 MYSQL_MAILDIR_FIELD     concat(SUBSTRING(mail_addr, LOCATE('@', mail_addr)+1), '/', mail_acc, '/')
 MYSQL_QUOTA_FIELD       concat(quota,'S')
 MYSQL_WHERE_CLAUSE      status = 'ok' AND po_active = 'yes'
+
+# courier-authlib >= 0.72 refuses to read this file without this section.
+##NAME: MARKER:0
+#
+# Do not remove this section from this configuration file. This section
+# must be present at the end of this file.

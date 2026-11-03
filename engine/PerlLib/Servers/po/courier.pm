@@ -188,8 +188,11 @@ sub setEnginePermissions
         $rs = setRights(
             "$self->{'config'}->{'AUTHLIB_CONF_DIR'}/dhparams.pem",
             {
-                user  => $self->{'config'}->{'AUTHDAEMON_USER'},
-                group => $self->{'config'}->{'AUTHDAEMON_GROUP'},
+                # Must be readable by couriertls(1) when spawned for STARTTLS
+                user  => ( getpwnam( 'courier' )
+                    ? 'courier' : $self->{'config'}->{'AUTHDAEMON_USER'} ),
+                group => ( getgrnam( 'courier' )
+                    ? 'courier' : $self->{'config'}->{'AUTHDAEMON_GROUP'} ),
                 mode  => '0600'
             }
         );

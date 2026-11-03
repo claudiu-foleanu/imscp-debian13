@@ -33,6 +33,7 @@ use iMSCP::Crypt qw/ ALPHA64 decryptRijndaelCBC encryptRijndaelCBC randomStr /;
 use iMSCP::Database;
 use iMSCP::Debug qw/ debug error /;
 use iMSCP::Dir;
+use iMSCP::Rights 'setRights';
 use iMSCP::EventManager;
 use iMSCP::Execute qw/ execute executeNoWait /;
 use iMSCP::File;
@@ -214,6 +215,12 @@ sub configurePostfix
                 smtpd_sasl_path                        => {
                     action => 'replace',
                     values => [ 'smtpd' ]
+                },
+                # Newer Cyrus SASL libraries (Debian >= 12) don't look into
+                # the /etc/postfix/sasl directory anymore
+                cyrus_sasl_config_path                 => {
+                    action => 'replace',
+                    values => [ $self->{'config'}->{'SASL_CONF_DIR'} ]
                 },
                 smtpd_sasl_auth_enable                 => {
                     action => 'replace',
@@ -606,8 +613,11 @@ sub _setupSASL
     );
     $file->set( $cfgTpl );
     $rs = $file->save();
+    # The file must be readable by the smtpd(8) process which runs as the
+    # postfix user
     $rs ||= $file->owner(
-        $::imscpConfig{'ROOT_USER'}, $::imscpConfig{'ROOT_GROUP'}
+        $::imscpConfig{'ROOT_USER'},
+        ( getgrnam( 'postfix' ) ? 'postfix' : $::imscpConfig{'ROOT_GROUP'} )
     );
     $rs ||= $file->mode( 0640 );
 }
@@ -764,6 +774,21 @@ sub _buildSslConfFiles
         'SERVICES_SSL_ENABLED', 'no'
     ) eq 'yes';
 
+    # With newer Courier versions (Debian >= 11), the couriertls(1) process
+    # spawned for STARTTLS (IMAP 143, POP3 110) runs as the courier user. Make
+    # a private copy of the services certificate that it can read, rather than
+    # granting access to the i-MSCP configuration directory.
+    my $certFile = "$self->{'config'}->{'AUTHLIB_CONF_DIR'}/imscp_services.pem";
+    my $rs = iMSCP::File->new(
+        filename => "$::imscpConfig{'CONF_DIR'}/imscp_services.pem"
+    )->copyFile( $certFile, { preserve => 'no' } );
+    $rs ||= setRights( $certFile, {
+        user  => $::imscpConfig{'ROOT_USER'},
+        group => $self->getCourierGroup(),
+        mode  => '0640'
+    } );
+    return $rs if $rs;
+
     for my $conffile ( $self->{'config'}->{'COURIER_IMAP_SSL'},
         $self->{'config'}->{'COURIER_POP_SSL'}
     ) {
@@ -786,9 +811,9 @@ sub _buildSslConfFiles
         return $rs if $rs;
 
         if ( $cfgTpl =~ /^TLS_CERTFILE=/gm ) {
-            $cfgTpl =~ s!^(TLS_CERTFILE=).*!$1$::imscpConfig{'CONF_DIR'}/imscp_services.pem!gm;
+            $cfgTpl =~ s!^(TLS_CERTFILE=).*!$1$certFile!gm;
         } else {
-            $cfgTpl .= "TLS_CERTFILE=$::imscpConfig{'CONF_DIR'}/imscp_services.pem\n";
+            $cfgTpl .= "TLS_CERTFILE=$certFile\n";
         }
 
         $rs = $self->{'events'}->trigger(
@@ -809,6 +834,39 @@ sub _buildSslConfFiles
     }
 
     0;
+}
+
+=item getCourierUser( )
+
+ Get the user under which the Courier IMAP/POP login processes run
+
+ Courier >= 1.0 (Debian >= 11) runs as the 'courier' user. Older versions
+ run as the authdaemon user.
+
+ Return string User name
+
+=cut
+
+sub getCourierUser
+{
+    my ( $self ) = @_;
+
+    getpwnam( 'courier' ) ? 'courier' : $self->{'config'}->{'AUTHDAEMON_USER'};
+}
+
+=item getCourierGroup( )
+
+ Get the group under which the Courier IMAP/POP login processes run
+
+ Return string Group name
+
+=cut
+
+sub getCourierGroup
+{
+    my ( $self ) = @_;
+
+    getgrnam( 'courier' ) ? 'courier' : $self->{'config'}->{'AUTHDAEMON_GROUP'};
 }
 
 =item _migrateFromDovecot( )

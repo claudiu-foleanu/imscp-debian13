@@ -281,7 +281,7 @@ sub _setupDatabase
                 $::imscpDBKey, $::imscpDBiv, $config{'VSFTPD_SQL_USER'}
             );
         } else {
-            $config{'PROFTPD_SQL_USER'} = 'vsftpd_' . randomStr( 9, ALPHA64 );
+            $config{'VSFTPD_SQL_USER'} = 'vsftpd_' . randomStr( 9, ALPHA64 );
         }
 
         if ( length $config{'VSFTPD_SQL_USER_PASSWD'} ) {

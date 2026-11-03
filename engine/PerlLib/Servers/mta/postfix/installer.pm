@@ -510,8 +510,17 @@ sub _buildMainCfFile
         }
 
         # Without explicit compatibility level, Postfix >= 3.0 assumes level
-        # 0 and logs warnings about backwards-compatible default settings
-        if ( version->parse( $self->{'config'}->{'POSTFIX_VERSION'} ) >= version->parse( '3.0.0' ) ) {
+        # 0 and logs warnings about backwards-compatible default settings.
+        # Postfix >= 3.6 warns for any level lower than 3.6. All parameters
+        # affected by the compatibility level are explicitly set by i-MSCP,
+        # and all master.cf entries have an explicit chroot value.
+        my $postfixVersion = version->parse( $self->{'config'}->{'POSTFIX_VERSION'} );
+        if ( $postfixVersion >= version->parse( '3.6.0' ) ) {
+            $params{'compatibility_level'} = {
+                action => 'replace',
+                values => [ '3.6' ]
+            };
+        } elsif ( $postfixVersion >= version->parse( '3.0.0' ) ) {
             $params{'compatibility_level'} = {
                 action => 'replace',
                 values => [ '2' ]
