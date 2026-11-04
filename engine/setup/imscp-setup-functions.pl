@@ -27,11 +27,11 @@ use iMSCP::Boolean;
 use iMSCP::Bootstrapper;
 use iMSCP::Database;
 use iMSCP::DbTasksProcessor;
-use iMSCP::Debug 'error';
+use iMSCP::Debug qw/ debug error warning /;
 use iMSCP::Dialog;
 use iMSCP::Dir;
 use iMSCP::EventManager;
-use iMSCP::Execute 'executeNoWait';
+use iMSCP::Execute qw/ execute executeNoWait /;
 use iMSCP::File;
 use iMSCP::Getopt;
 use iMSCP::Packages;
@@ -411,6 +411,23 @@ sub setupDbTasks
 
             $db->useDatabase( $oldDbName ) if $oldDbName;
         }
+
+        # Register and schedule installation of the plugins bundled with the
+        # distribution so that they are deployed by default. New plugins are
+        # registered and set to 'toinstall'; the DB tasks processor below then
+        # applies their backend part. This step is best-effort and never aborts
+        # the installation.
+        my $rs = execute(
+            [
+                '/usr/bin/php', '-d', 'date.timezone=UTC',
+                "$::imscpConfig{'ROOT_DIR'}/engine/setup/imscp-setup-plugins.php"
+            ],
+            \my $pluginStdout,
+            \my $pluginStderr
+        );
+        debug( $pluginStdout ) if length $pluginStdout;
+        warning( $pluginStderr ) if length $pluginStderr;
+        warning( 'Bundled plugin deployment returned a non-zero status.' ) if $rs;
 
         startDetail();
         iMSCP::DbTasksProcessor
