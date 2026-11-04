@@ -35,10 +35,10 @@ use iMSCP::Debug qw/ debug getMessageByType /;
 use iMSCP::Dir;
 use iMSCP::Execute qw/ execute executeNoWait /;
 use iMSCP::File;
+use iMSCP::HttpDownload qw/ httpGet httpGetToFile /;
 use iMSCP::ProgramFinder;
 use iMSCP::Rights 'setRights';
 use JSON qw/ from_json to_json /;
-use LWP::UserAgent ();
 use version;
 use fields qw/
     user group composer_home composer_working_dir composer_phar composer_json
@@ -165,32 +165,22 @@ sub installComposer
         dirname => $self->{'composer_home'}
     )->clear( undef, qr/\.(?:phar|pub)$/ ) if -d $self->{'composer_home'};
 
-    my $ua = LWP::UserAgent->new(
-        agent     => "iMSCP/$::imscpConfig{'Version'}",
-        timeout   => 30,
-        env_proxy => TRUE
-    );
     my $installer = File::Temp->new();
     $installer->close();
 
-    # Download composer installer
-    my $response;
-    ( $response = $ua->get(
-        'https://getcomposer.org/installer',
-        ':content_file' => $installer->filename()
-    ) )->is_success or die( sprintf(
-        "Couldn't download the PHP dependency manager installer: %s",
-        $response->status_line
-    ));
+    # Download composer installer (retries over IPv4 when the host resolves to
+    # an unreachable IPv6 address)
+    httpGetToFile(
+        'https://getcomposer.org/installer', $installer->filename()
+    ) or die(
+        "Couldn't download the PHP dependency manager installer.\n"
+    );
     # Download composer installer signature for verification
-    ( $response = $ua->get(
-        'https://composer.github.io/installer.sig'
-    ) )->is_success or die( sprintf(
-        "Couldn't download signature for the PHP dependency manager installer: %s",
-        $response->status_line
-    ));
+    defined( my $sig = httpGet( 'https://composer.github.io/installer.sig' )) or die(
+        "Couldn't download signature for the PHP dependency manager installer.\n"
+    );
     # Verify composer installer signature
-    chomp( my $sig = $response->decoded_content );
+    chomp( $sig );
     $sig eq Digest::SHA->new( 'sha384' )->addfile(
         $installer->filename()
     )->hexdigest() or die(

@@ -39,7 +39,7 @@ use iMSCP::File;
 use iMSCP::Getopt;
 use iMSCP::Net;
 use Net::LibIDN qw/ idn_to_ascii idn_to_unicode /;
-use LWP::Simple 'get';
+use iMSCP::HttpDownload 'httpGet';
 use parent 'Common::SingletonClass';
 
 =head1 DESCRIPTION
@@ -195,8 +195,8 @@ sub dialogForBaseServerPublicIP
     if ( !length $value
         && !isValidIpAddr( $baseServerIp, qr/(?:PUBLIC|GLOBAL-UNICAST)/ )
     ) {
-        chomp( $value = get( 'https://ipinfo.io/ip' )
-            || get( 'https://api.ipify.org/?format=txt' ) || ''
+        chomp( $value = httpGet( 'https://ipinfo.io/ip' )
+            || httpGet( 'https://api.ipify.org/?format=txt' ) || ''
         );
 
         # If the WAN IP has been guessed and the user didn't asked for
@@ -236,8 +236,8 @@ sub dialogForBaseServerPublicIP
         ||  $wanNotSetOrInsidePrivateRange
         || grep ( $_ eq iMSCP::Getopt->reconfigure, qw/ local_server primary_ip all / )
     ) {
-        chomp( $value = get( 'https://ipinfo.io/ip' )
-            || get( 'https://api.ipify.org/?format=txt' ) || ''
+        chomp( $value = httpGet( 'https://ipinfo.io/ip' )
+            || httpGet( 'https://api.ipify.org/?format=txt' ) || ''
         ) unless length $value || grep (
             $_ eq iMSCP::Getopt->reconfigure, qw/ local_server primary_ip all /
         );
