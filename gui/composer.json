@@ -31,6 +31,9 @@
     "preferred-install": "dist",
     "process-timeout": 5000,
     "use-include-path": false,
+    "platform": {
+      "php": "8.4"
+    },
     "allow-plugins": {
       "cweagans/composer-patches": true,
       "imscp/composer-installers": true
