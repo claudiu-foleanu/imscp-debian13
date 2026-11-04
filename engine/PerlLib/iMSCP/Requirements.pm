@@ -126,14 +126,14 @@ sub _init
         php  => {
             version_command => '/usr/bin/php -nv 2> /dev/null',
             version_regexp  => qr/PHP\s+([\d.]+)/,
-            min_version     => '7.3.0',
-            max_version     => '7.3.999',
+            min_version     => '8.2.0',
+            max_version     => '8.4.999',
             modules         => [
-                'apc', 'apcu', 'ctype', 'curl', 'date', 'dom', 'fileinfo',
+                'apcu', 'ctype', 'curl', 'date', 'dom', 'fileinfo',
                 'filter', 'ftp', 'gd', 'gettext', 'gmp', 'hash', 'iconv',
                 'imap', 'intl', 'json', 'libxml', 'mbstring', 'mysqlnd',
                 'mysqli', 'openssl', 'pcntl', 'pcre', 'PDO', 'pdo_mysql',
-                'Phar', 'posix', 'pspell', 'Reflection', 'session',
+                'Phar', 'posix', 'Reflection', 'session',
                 'SimpleXML', 'sockets', 'SPL', 'xml', 'xmlreader',
                 'xmlwriter', 'zip', 'zlib', 'Zend OPcache'
             ]
