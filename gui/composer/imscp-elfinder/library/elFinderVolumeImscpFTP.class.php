@@ -109,10 +109,12 @@ class elFinderVolumeImscpFTP extends elFinderVolumeFTP
      * @inheritdoc
      *
      * Keep extraction only, and only PHP-based ('phpfunction') archivers, so
-     * that procExec() (disabled above) is never relied upon. In practice this
-     * exposes ZIP extraction via PHP's ZipArchive class. Creating archives
-     * stays disabled (empty 'create'). $use_cache is forced off so the empty
-     * 'archivers' connector option does not short-circuit detection.
+     * that procExec() (disabled above) is never relied upon. This exposes ZIP
+     * extraction via PHP's ZipArchive class and, additionally, TAR-family
+     * extraction (.tar, .tar.gz/.tgz, .tar.bz2/.tbz) via PHP's PharData class.
+     * Creating archives stays disabled (empty 'create'). $use_cache is forced
+     * off so the empty 'archivers' connector option does not short-circuit
+     * detection.
      */
     protected function getArchivers($use_cache = true)
     {
@@ -127,7 +129,57 @@ class elFinderVolumeImscpFTP extends elFinderVolumeFTP
             }
         }
 
+        // TAR family through PHP's PharData (no shell). PharData detects the
+        // compression from the archive extension, which the FTP extractor
+        // preserves in the temporary file.
+        if (class_exists('PharData', false)) {
+            $phar = array(
+                'cmd'  => 'phpfunction',
+                'argc' => array('elFinderVolumeImscpFTP', 'pharExtract')
+            );
+            $extract['application/x-tar']   = $phar + array('ext' => 'tar');
+            $extract['application/x-gzip']  = $phar + array('ext' => 'tgz');
+            $extract['application/x-bzip2'] = $phar + array('ext' => 'tbz');
+        }
+
         return array('create' => array(), 'extract' => $extract);
+    }
+
+    /**
+     * Extract a TAR-family archive (.tar, .tar.gz/.tgz, .tar.bz2/.tbz) using
+     * PHP's PharData class -- no shell command is executed.
+     *
+     * Registered as a 'phpfunction' archiver, so elFinder calls it as
+     * pharExtract($archivePath, $destDir). Must be public static for
+     * call_user_func_array() in elFinderVolumeDriver::unpackArchive().
+     *
+     * @param string $path  Path to the (already downloaded) archive
+     * @param string $toDir Destination directory
+     * @return void
+     * @throws Exception on error (handled by elFinder like the ZIP extractor)
+     */
+    public static function pharExtract($path, $toDir)
+    {
+        try {
+            $arc = new PharData($path);
+
+            // Reject archives whose extracted size exceeds the configured
+            // ceiling, before writing anything to disk.
+            $maxSize = empty(self::$maxArcFilesSize) ? 0 : (int)self::$maxArcFilesSize;
+            if ($maxSize > 0) {
+                $total = 0;
+                foreach (new RecursiveIteratorIterator($arc) as $file) {
+                    $total += $file->getSize();
+                    if ($total > $maxSize) {
+                        throw new Exception(elFinder::ERROR_ARC_MAXSIZE);
+                    }
+                }
+            }
+
+            $arc->extractTo($toDir, null, true);
+        } catch (Throwable $e) {
+            throw new Exception($e->getMessage());
+        }
     }
 
     /**
