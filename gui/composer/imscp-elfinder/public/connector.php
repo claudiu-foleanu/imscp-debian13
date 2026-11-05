@@ -123,6 +123,11 @@ $opts = [
             'imgLib'          => 'gd',
             'mimeDetect'      => 'internal',
             'uploadMaxSize'   => (string)$app->getConfig('upload_max_size'),
+            // Safety ceiling on the total extracted size of an archive. The
+            // work directory lives on the (shared) panel server, so this bounds
+            // how much an extraction may write there. Generous enough for real
+            // archives while rejecting pathological ones.
+            'maxArcFilesSize' => '2G',
             'disabled'        => elFinderImscp::DISABLED_COMMANDS,
             'acceptedName'    => $acceptedName,
             'acceptedDirname' => $acceptedName,

@@ -21,7 +21,9 @@
 /**
  * elFinder FTP volume driver hardened for i-MSCP
  *
- * - Never executes shell commands (no archivers, no ImageMagick CLI...).
+ * - Never executes shell commands (procExec() is disabled: no shell archivers,
+ *   no ImageMagick CLI...). ZIP extraction is supported through PHP's
+ *   ZipArchive class only; creating archives remains disabled.
  * - Always uses the authenticated FTP control connection for transfers (the
  *   upstream driver can open a second connection through the ftp:// stream
  *   wrapper, putting the credentials in an URL).
@@ -105,24 +107,35 @@ class elFinderVolumeImscpFTP extends elFinderVolumeFTP
 
     /**
      * @inheritdoc
+     *
+     * Keep extraction only, and only PHP-based ('phpfunction') archivers, so
+     * that procExec() (disabled above) is never relied upon. In practice this
+     * exposes ZIP extraction via PHP's ZipArchive class. Creating archives
+     * stays disabled (empty 'create'). $use_cache is forced off so the empty
+     * 'archivers' connector option does not short-circuit detection.
      */
     protected function getArchivers($use_cache = true)
     {
-        return array('create' => array(), 'extract' => array());
+        $archivers = parent::getArchivers(false);
+
+        $extract = array();
+        if (isset($archivers['extract']) && is_array($archivers['extract'])) {
+            foreach ($archivers['extract'] as $mime => $conf) {
+                if (isset($conf['cmd']) && $conf['cmd'] === 'phpfunction') {
+                    $extract[$mime] = $conf;
+                }
+            }
+        }
+
+        return array('create' => array(), 'extract' => $extract);
     }
 
     /**
      * @inheritdoc
+     *
+     * Creating archives is not supported (no shell, create archivers disabled).
      */
     protected function _archive($dir, $files, $name, $arc)
-    {
-        return false;
-    }
-
-    /**
-     * @inheritdoc
-     */
-    protected function _extract($path, $arc)
     {
         return false;
     }

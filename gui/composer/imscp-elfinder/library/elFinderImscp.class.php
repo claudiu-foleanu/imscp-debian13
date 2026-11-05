@@ -21,9 +21,12 @@
 /**
  * elFinder restricted to an allowlist of commands
  *
- * Commands that are not in the allowlist (netmount, archive, extract, resize,
+ * Commands that are not in the allowlist (netmount, archive, resize,
  * zipdl, editor, callback, url, tmb, dim...) are reported as unknown commands
  * by both the connector and elFinder::exec().
+ *
+ * 'extract' is allowed (ZIP archives only, extracted through PHP's ZipArchive
+ * class -- no shell command is ever executed, see elFinderVolumeImscpFTP).
  */
 class elFinderImscp extends elFinder
 {
@@ -33,9 +36,9 @@ class elFinderImscp extends elFinder
      * @var array
      */
     const ALLOWED_COMMANDS = array(
-        'abort', 'chmod', 'duplicate', 'file', 'get', 'info', 'ls', 'mkdir',
-        'mkfile', 'open', 'parents', 'paste', 'put', 'rename', 'rm', 'search',
-        'size', 'subdirs', 'tree', 'upload'
+        'abort', 'chmod', 'duplicate', 'extract', 'file', 'get', 'info', 'ls',
+        'mkdir', 'mkfile', 'open', 'parents', 'paste', 'put', 'rename', 'rm',
+        'search', 'size', 'subdirs', 'tree', 'upload'
     );
 
     /**
@@ -44,7 +47,7 @@ class elFinderImscp extends elFinder
      * @var array
      */
     const DISABLED_COMMANDS = array(
-        'archive', 'callback', 'dim', 'editor', 'extract', 'netmount',
+        'archive', 'callback', 'dim', 'editor', 'netmount',
         'resize', 'tmb', 'url', 'zipdl'
     );
 
