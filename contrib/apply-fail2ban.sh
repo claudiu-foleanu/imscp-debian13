@@ -41,6 +41,8 @@ ignoreip = ${IGNOREIP}
 bantime  = 1h
 findtime = 10m
 maxretry = 5
+banaction          = iptables-multiport
+banaction_allports = iptables-allports
 
 [sshd]
 enabled = true
