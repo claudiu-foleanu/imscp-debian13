@@ -8,7 +8,7 @@
  *
  * Perl code:
  *
- * Package Listener::PhpMyAdmin::CustomConfigIncFile;
+ * package Listener::PhpMyAdmin::CustomConfigIncFile;
  *
  * use strict;
  * use warnings;

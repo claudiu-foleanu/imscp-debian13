@@ -9,7 +9,7 @@
  *
  * Perl code:
  *
- * Package Listener::ElFinder::CustomConfigFile;
+ * package Listener::ElFinder::CustomConfigFile;
  *
  * use strict;
  * use warnings;

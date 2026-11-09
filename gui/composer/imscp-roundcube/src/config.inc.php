@@ -8,7 +8,7 @@
  *
  * Perl code:
  *
- * Package Listener::Roundcube::CustomConfigIncFile;
+ * package Listener::Roundcube::CustomConfigIncFile;
  *
  * use strict;
  * use warnings;
